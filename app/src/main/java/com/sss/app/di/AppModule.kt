@@ -15,6 +15,8 @@ import dagger.hilt.android.qualifiers.ApplicationContext
 import dagger.hilt.components.SingletonComponent
 import javax.inject.Singleton
 import com.sss.app.data.repository.ScreenshotRepository
+import com.sss.app.data.local.SessionDao
+import com.sss.app.data.repository.SessionRepository
 @Module
 @InstallIn(SingletonComponent::class)
 object AppModule {
@@ -48,6 +50,22 @@ object AppModule {
             )
         }
     }
+    private val MIGRATION_2_3 = object : Migration(2, 3) {
+        override fun migrate(database: SupportSQLiteDatabase) {
+
+            database.execSQL(
+                """
+            CREATE TABLE IF NOT EXISTS capture_sessions (
+                id INTEGER NOT NULL,
+                folderId INTEGER NOT NULL,
+                startedAt INTEGER NOT NULL,
+                isActive INTEGER NOT NULL,
+                PRIMARY KEY(id)
+            )
+            """.trimIndent()
+            )
+        }
+    }
 
     @Provides
     @Singleton
@@ -60,7 +78,10 @@ object AppModule {
             AppDatabase::class.java,
             "sss_database"
         )
-            .addMigrations(MIGRATION_1_2)
+            .addMigrations(
+                MIGRATION_1_2,
+                MIGRATION_2_3
+            )
             .build()
     }
 
@@ -79,6 +100,13 @@ object AppModule {
     }
 
     @Provides
+    fun provideSessionDao(
+        database: AppDatabase
+    ): SessionDao {
+        return database.sessionDao()
+    }
+
+    @Provides
     @Singleton
     fun provideFolderRepository(
         folderDao: FolderDao
@@ -92,4 +120,11 @@ object AppModule {
     ): ScreenshotRepository {
         return ScreenshotRepository(screenshotDao)
     }
+
+    @Provides
+    @Singleton
+    fun provideSessionRepository(
+        sessionDao: SessionDao
+    ): SessionRepository =
+        SessionRepository(sessionDao)
 }

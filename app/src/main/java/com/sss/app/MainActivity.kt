@@ -46,6 +46,7 @@ import com.sss.app.ui.home.HomeViewModel
 import dagger.hilt.android.AndroidEntryPoint
 import com.sss.app.ui.folder.FolderViewModel
 import com.sss.app.ui.theme.SSSTheme
+import com.sss.app.ui.capture.CaptureViewModel
 @AndroidEntryPoint
 class MainActivity : ComponentActivity() {
 
@@ -298,7 +299,8 @@ fun HomeScreen(
 @Composable
 fun CaptureScreen(
     folders: List<FolderEntity>,
-    onBackClick: () -> Unit
+    onBackClick: () -> Unit,
+    viewModel: CaptureViewModel = hiltViewModel()
 ) {
 
     var selectedFolder by remember {
@@ -308,6 +310,7 @@ fun CaptureScreen(
     var showFolderDialog by remember {
         mutableStateOf(false)
     }
+    val activeSession by viewModel.activeSession.collectAsState()
 
     Scaffold {
 
@@ -451,9 +454,13 @@ fun CaptureScreen(
 
                 Text(
                     text = "Capture is ready.",
+                    style = MaterialTheme.typography.bodyLarge
+                )
 
-                    style =
-                        MaterialTheme.typography.bodyLarge
+                Spacer(modifier = Modifier.height(8.dp))
+
+                Text(
+                    text = "Session ID: ${activeSession?.id ?: "None"}"
                 )
 
                 Spacer(
@@ -471,10 +478,7 @@ fun CaptureScreen(
 
                 Button(
                     onClick = {
-
-                        // Actual capture service
-                        // will be implemented later.
-
+                        viewModel.stopCapture()
                         onBackClick()
                     },
 
@@ -531,12 +535,9 @@ fun CaptureScreen(
                                 modifier = Modifier
                                     .fillMaxWidth()
                                     .clickable {
-
-                                        selectedFolder =
-                                            folder
-
-                                        showFolderDialog =
-                                            false
+                                        selectedFolder = folder
+                                        viewModel.startCapture(folder.id)
+                                        showFolderDialog = false
                                     }
                                     .padding(16.dp)
                             )
