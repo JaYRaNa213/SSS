@@ -1,8 +1,12 @@
 package com.sss.app
 
+import android.content.pm.PackageManager
+import android.os.Build
 import android.os.Bundle
 import androidx.activity.ComponentActivity
+import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.compose.setContent
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -27,6 +31,7 @@ import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -35,18 +40,21 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
+import androidx.core.content.ContextCompat
 import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.navigation.compose.NavHost
 import androidx.navigation.compose.composable
 import androidx.navigation.compose.rememberNavController
 import com.sss.app.data.local.FolderEntity
-import com.sss.app.ui.home.HomeViewModel
-import dagger.hilt.android.AndroidEntryPoint
-import com.sss.app.ui.folder.FolderViewModel
-import com.sss.app.ui.theme.SSSTheme
 import com.sss.app.ui.capture.CaptureViewModel
+import com.sss.app.ui.folder.FolderViewModel
+import com.sss.app.ui.home.HomeViewModel
+import com.sss.app.ui.theme.SSSTheme
+import dagger.hilt.android.AndroidEntryPoint
+
 @AndroidEntryPoint
 class MainActivity : ComponentActivity() {
 
@@ -66,12 +74,6 @@ fun SssApp() {
 
     val navController = rememberNavController()
 
-    /*
-     * HomeViewModel is obtained through Hilt.
-     *
-     * The same ViewModel is used by HomeScreen,
-     * where folders are loaded from Room.
-     */
     val homeViewModel: HomeViewModel = hiltViewModel()
 
     val folders by homeViewModel.folders.collectAsState()
@@ -112,8 +114,8 @@ fun SssApp() {
         // FOLDER
         // ---------------------------------------------------------
 
-        composable("folder/{folderId}/{folderName}") { backStackEntry ->val
-                folderId = backStackEntry.arguments
+        composable("folder/{folderId}/{folderName}") { backStackEntry ->
+            val folderId = backStackEntry.arguments
                 ?.getString("folderId")
                 ?.toLongOrNull()
                 ?: return@composable
@@ -240,7 +242,6 @@ fun HomeScreen(
                     )
                 }
 
-                // Always show Add Folder
                 item {
 
                     AddFolderCard(
@@ -267,10 +268,6 @@ fun HomeScreen(
         }
     }
 
-    // ------------------------------------------------------------
-    // ADD FOLDER DIALOG
-    // ------------------------------------------------------------
-
     if (showAddFolderDialog) {
 
         AddFolderDialog(
@@ -281,10 +278,8 @@ fun HomeScreen(
 
             onCreate = { folderName ->
 
-                // Save folder into Room.
                 onAddFolder(folderName)
 
-                // Close dialog.
                 showAddFolderDialog = false
             }
         )
@@ -303,6 +298,34 @@ fun CaptureScreen(
     viewModel: CaptureViewModel = hiltViewModel()
 ) {
 
+    val context = LocalContext.current
+    val requiredPermission = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+        android.Manifest.permission.READ_MEDIA_IMAGES
+    } else {
+        android.Manifest.permission.READ_EXTERNAL_STORAGE
+    }
+
+    var hasPermission by remember {
+        mutableStateOf(
+            ContextCompat.checkSelfPermission(
+                context,
+                requiredPermission
+            ) == PackageManager.PERMISSION_GRANTED
+        )
+    }
+
+    val permissionLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.RequestPermission()
+    ) { isGranted ->
+        hasPermission = isGranted
+    }
+
+    LaunchedEffect(Unit) {
+        if (!hasPermission) {
+            permissionLauncher.launch(requiredPermission)
+        }
+    }
+
     var selectedFolder by remember {
         mutableStateOf<FolderEntity?>(null)
     }
@@ -312,9 +335,7 @@ fun CaptureScreen(
     }
     val activeSession by viewModel.activeSession.collectAsState()
 
-    Scaffold {
-
-            innerPadding ->
+    Scaffold { innerPadding ->
 
         Column(
             modifier = Modifier
@@ -353,9 +374,40 @@ fun CaptureScreen(
                 modifier = Modifier.height(24.dp)
             )
 
-            // ----------------------------------------------------
-            // NO FOLDER SELECTED
-            // ----------------------------------------------------
+            if (!hasPermission) {
+                Card(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(bottom = 16.dp),
+                    colors = CardDefaults.cardColors(
+                        containerColor = MaterialTheme.colorScheme.errorContainer
+                    )
+                ) {
+                    Column(
+                        modifier = Modifier.padding(16.dp)
+                    ) {
+                        Text(
+                            text = "Storage Permission Required",
+                            fontWeight = FontWeight.Bold,
+                            color = MaterialTheme.colorScheme.onErrorContainer
+                        )
+                        Spacer(modifier = Modifier.height(4.dp))
+                        Text(
+                            text = "Storage permission is required to detect screenshots taken on this device.",
+                            style = MaterialTheme.typography.bodyMedium,
+                            color = MaterialTheme.colorScheme.onErrorContainer
+                        )
+                        Spacer(modifier = Modifier.height(8.dp))
+                        Button(
+                            onClick = {
+                                permissionLauncher.launch(requiredPermission)
+                            }
+                        ) {
+                            Text("Grant Permission")
+                        }
+                    }
+                }
+            }
 
             if (selectedFolder == null) {
 
@@ -392,10 +444,6 @@ fun CaptureScreen(
                 }
 
             } else {
-
-                // ------------------------------------------------
-                // ACTIVE FOLDER
-                // ------------------------------------------------
 
                 Text(
                     text = "Active Folder",
@@ -495,10 +543,6 @@ fun CaptureScreen(
         }
     }
 
-    // ------------------------------------------------------------
-    // SELECT FOLDER DIALOG
-    // ------------------------------------------------------------
-
     if (showFolderDialog) {
 
         AlertDialog(
@@ -581,9 +625,7 @@ fun FolderScreen(
         .screenshots(folderId)
         .collectAsState()
 
-    Scaffold {
-
-            innerPadding ->
+    Scaffold { innerPadding ->
 
         Column(
             modifier = Modifier

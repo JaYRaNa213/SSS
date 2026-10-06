@@ -28,7 +28,7 @@ class CaptureViewModel @Inject constructor(
 
     private val screenshotObserver =
         ScreenshotObserver(
-            contentResolver = application.contentResolver,
+            context = application,
             onScreenshotDetected = { uri ->
                 onScreenshotDetected(uri)
             }
