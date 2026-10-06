@@ -14,6 +14,7 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
@@ -40,6 +41,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
@@ -48,6 +50,7 @@ import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.navigation.compose.NavHost
 import androidx.navigation.compose.composable
 import androidx.navigation.compose.rememberNavController
+import coil3.compose.AsyncImage
 import com.sss.app.data.local.FolderEntity
 import com.sss.app.ui.capture.CaptureViewModel
 import com.sss.app.ui.folder.FolderViewModel
@@ -636,8 +639,7 @@ fun FolderScreen(
             Text(
                 text = "←  $folderName",
 
-                style =
-                    MaterialTheme.typography.headlineSmall,
+                style = MaterialTheme.typography.headlineSmall,
 
                 fontWeight = FontWeight.Bold,
 
@@ -652,16 +654,15 @@ fun FolderScreen(
             Box(
                 modifier = Modifier
                     .fillMaxSize()
-                    .weight(1f),
-
-                contentAlignment =
-                    Alignment.Center
+                    .weight(1f)
             ) {
 
                 if (screenshots.isEmpty()) {
 
                     Column(
-                        horizontalAlignment = Alignment.CenterHorizontally
+                        modifier = Modifier.fillMaxSize(),
+                        horizontalAlignment = Alignment.CenterHorizontally,
+                        verticalArrangement = Arrangement.Center
                     ) {
 
                         Text(
@@ -702,24 +703,44 @@ fun FolderScreen(
                 } else {
 
                     Column(
-                        horizontalAlignment = Alignment.CenterHorizontally
+                        modifier = Modifier.fillMaxSize()
                     ) {
 
                         Text(
                             text = "${screenshots.size} screenshots",
-                            style = MaterialTheme.typography.titleMedium
+                            style = MaterialTheme.typography.titleMedium,
+                            modifier = Modifier.padding(horizontal = 20.dp, vertical = 8.dp)
                         )
 
-                        Spacer(
-                            modifier = Modifier.height(20.dp)
-                        )
-
-                        Button(
-                            onClick = {
-                                viewModel.addTestScreenshot(folderId)
-                            }
+                        LazyVerticalGrid(
+                            columns = GridCells.Fixed(3),
+                            modifier = Modifier
+                                .fillMaxSize()
+                                .padding(horizontal = 16.dp),
+                            contentPadding = PaddingValues(bottom = 16.dp),
+                            horizontalArrangement = Arrangement.spacedBy(8.dp),
+                            verticalArrangement = Arrangement.spacedBy(8.dp)
                         ) {
-                            Text("Add Test Screenshot")
+
+                            items(
+                                items = screenshots,
+                                key = { screenshot -> screenshot.id }
+                            ) { screenshot ->
+
+                                Card(
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .aspectRatio(1f),
+                                    elevation = CardDefaults.cardElevation(defaultElevation = 2.dp)
+                                ) {
+                                    AsyncImage(
+                                        model = screenshot.filePath,
+                                        contentDescription = "Screenshot #${screenshot.sequenceNumber}",
+                                        contentScale = ContentScale.Crop,
+                                        modifier = Modifier.fillMaxSize()
+                                    )
+                                }
+                            }
                         }
                     }
                 }

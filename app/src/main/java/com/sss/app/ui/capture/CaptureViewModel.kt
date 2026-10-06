@@ -7,6 +7,7 @@ import androidx.lifecycle.viewModelScope
 import com.sss.app.capture.ScreenshotObserver
 import com.sss.app.data.local.CaptureSessionEntity
 import com.sss.app.data.repository.SessionRepository
+import com.sss.app.data.repository.ScreenshotRepository
 import dagger.hilt.android.lifecycle.HiltViewModel
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -17,7 +18,8 @@ import javax.inject.Inject
 @HiltViewModel
 class CaptureViewModel @Inject constructor(
     application: Application,
-    private val repository: SessionRepository
+    private val repository: SessionRepository,
+    private val screenshotRepository: ScreenshotRepository
 ) : AndroidViewModel(application) {
 
     private val _activeSession =
@@ -65,11 +67,30 @@ class CaptureViewModel @Inject constructor(
     }
 
     private fun onScreenshotDetected(uri: Uri) {
+        viewModelScope.launch {
+            val session = repository.getActiveSession()
 
-        // Temporary test.
-        // Room storage will be connected in the next step.
+            if (session == null) {
+                println("SSS No active session. Screenshot not saved.")
+                return@launch
+            }
 
-        println("SSS Screenshot detected: $uri")
+            val screenshotCount =
+                screenshotRepository.getScreenshotCount(session.folderId)
+
+            val sequenceNumber = screenshotCount + 1
+
+            screenshotRepository.addScreenshot(
+                folderId = session.folderId,
+                filePath = uri.toString(),
+                sequenceNumber = sequenceNumber
+            )
+
+            println(
+                "SSS Screenshot saved: folderId=${session.folderId}, " +
+                        "sequence=$sequenceNumber, uri=$uri"
+            )
+        }
     }
 
     override fun onCleared() {
