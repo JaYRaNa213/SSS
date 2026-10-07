@@ -13,6 +13,8 @@ import androidx.activity.compose.setContent
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
+import androidx.compose.foundation.pager.HorizontalPager
+import androidx.compose.foundation.pager.rememberPagerState
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.layout.Arrangement
@@ -45,16 +47,23 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateMapOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.focus.FocusRequester
+import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.text.TextStyle
+import com.sss.app.ui.pdf.PdfExportDialog
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 import androidx.core.content.ContextCompat
 import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.navigation.compose.NavHost
@@ -766,6 +775,10 @@ fun FolderScreen(
         mutableStateOf<Pair<ScreenshotEntity, Int>?>(null)
     }
 
+    var showPdfDialog by remember {
+        mutableStateOf(false)
+    }
+
     Scaffold { innerPadding ->
 
         Column(
@@ -774,20 +787,34 @@ fun FolderScreen(
                 .padding(innerPadding)
         ) {
 
-            Text(
-                text = "←  $folderName",
-
-                style = MaterialTheme.typography.headlineSmall,
-
-                fontWeight = FontWeight.Bold,
-
+            Row(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .clickable {
-                        onBackClick()
+                    .padding(20.dp),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Text(
+                    text = "←  $folderName",
+
+                    style = MaterialTheme.typography.headlineSmall,
+
+                    fontWeight = FontWeight.Bold,
+
+                    modifier = Modifier
+                        .clickable {
+                            onBackClick()
+                        }
+                )
+
+                if (screenshots.isNotEmpty()) {
+                    Button(
+                        onClick = { showPdfDialog = true }
+                    ) {
+                        Text("📄 Create PDF")
                     }
-                    .padding(20.dp)
-            )
+                }
+            }
 
             Box(
                 modifier = Modifier
@@ -959,6 +986,14 @@ fun FolderScreen(
             }
         )
     }
+
+    if (showPdfDialog) {
+        PdfExportDialog(
+            folderName = folderName,
+            screenshots = screenshots,
+            onDismiss = { showPdfDialog = false }
+        )
+    }
 }
 
 
@@ -966,6 +1001,7 @@ fun FolderScreen(
 // IMAGE VIEWER SCREEN
 // ================================================================
 
+@OptIn(ExperimentalFoundationApi::class)
 @Composable
 fun ImageViewerScreen(
     folderId: Long,
@@ -977,17 +1013,59 @@ fun ImageViewerScreen(
     val screenshotsFlow = remember(folderId) {
         viewModel.screenshots(folderId)
     }
+
     val screenshots by screenshotsFlow.collectAsState()
 
-    var screenshotToDelete by remember { mutableStateOf<ScreenshotEntity?>(null) }
-
-    val validIndex = if (screenshots.isNotEmpty()) {
-        initialIndex.coerceIn(0, screenshots.size - 1)
-    } else {
-        0
+    var screenshotToDelete by remember {
+        mutableStateOf<ScreenshotEntity?>(null)
     }
 
-    Log.d("SSS_VIEWER", "viewer composition index=$validIndex")
+    val rotationMap = remember { mutableStateMapOf<Int, Float>() }
+
+    if (screenshots.isEmpty()) {
+        Box(
+            modifier = Modifier
+                .fillMaxSize()
+                .background(Color.Black)
+        ) {
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(16.dp)
+                    .align(Alignment.TopCenter),
+                horizontalArrangement = Arrangement.Start
+            ) {
+                Text(
+                    text = "← Back",
+                    color = Color.White,
+                    style = MaterialTheme.typography.titleMedium,
+                    fontWeight = FontWeight.Bold,
+                    modifier = Modifier
+                        .clickable { onBackClick() }
+                        .padding(8.dp)
+                )
+            }
+        }
+        return
+    }
+
+    val validInitialIndex =
+        initialIndex.coerceIn(0, screenshots.lastIndex)
+
+    val pagerState = rememberPagerState(
+        initialPage = validInitialIndex,
+        pageCount = {
+            screenshots.size
+        }
+    )
+
+    LaunchedEffect(screenshots.size) {
+        if (screenshots.isNotEmpty() && pagerState.currentPage > screenshots.lastIndex) {
+            pagerState.scrollToPage(screenshots.lastIndex)
+        }
+    }
+
+    Log.d("SSS_VIEWER", "pager currentPage=${pagerState.currentPage}, total=${screenshots.size}")
 
     Scaffold(
         modifier = Modifier.fillMaxSize(),
@@ -1001,58 +1079,67 @@ fun ImageViewerScreen(
                 .background(Color.Black)
         ) {
 
-            val screenshot = screenshots.getOrNull(validIndex)
+            HorizontalPager(
+                state = pagerState,
+                modifier = Modifier
+                    .fillMaxSize()
+                    .padding(bottom = 60.dp)
+            ) { page ->
 
-            if (screenshot != null) {
-                val imageModel = remember(screenshot.filePath) {
-                    if (screenshot.filePath.startsWith("content://") || screenshot.filePath.startsWith("file://")) {
-                        Uri.parse(screenshot.filePath)
-                    } else {
-                        screenshot.filePath
+                val screenshot = screenshots.getOrNull(page)
+
+                if (screenshot != null) {
+
+                    val imageModel = remember(screenshot.filePath) {
+                        if (
+                            screenshot.filePath.startsWith("content://") ||
+                            screenshot.filePath.startsWith("file://")
+                        ) {
+                            Uri.parse(screenshot.filePath)
+                        } else {
+                            screenshot.filePath
+                        }
+                    }
+
+                    val rotation = rotationMap[page] ?: 0f
+
+                    Box(
+                        modifier = Modifier.fillMaxSize(),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        AsyncImage(
+                            model = imageModel,
+                            contentDescription =
+                                "Screenshot #${screenshot.sequenceNumber}",
+                            contentScale = ContentScale.Fit,
+                            modifier = Modifier
+                                .fillMaxSize()
+                                .graphicsLayer(rotationZ = rotation),
+                            onSuccess = {
+                                Log.d("SSS_VIEWER", "IMAGE SUCCESS URI=${screenshot.filePath}")
+                            },
+                            onError = { errorState ->
+                                Log.e(
+                                    "SSS_VIEWER",
+                                    "IMAGE ERROR URI=${screenshot.filePath}",
+                                    errorState.result.throwable
+                                )
+                            }
+                        )
                     }
                 }
-
-                Log.d("SSS_VIEWER", "loading URI=${screenshot.filePath}")
-
-                Box(
-                    modifier = Modifier.fillMaxSize(),
-                    contentAlignment = Alignment.Center
-                ) {
-                    AsyncImage(
-                        model = imageModel,
-                        contentDescription = "Screenshot #${screenshot.sequenceNumber}",
-                        contentScale = ContentScale.Fit,
-                        modifier = Modifier.fillMaxSize(),
-                        onSuccess = {
-                            Log.d("SSS_VIEWER", "IMAGE SUCCESS URI=${screenshot.filePath}")
-                        },
-                        onError = { errorState ->
-                            Log.e(
-                                "SSS_VIEWER",
-                                "IMAGE ERROR URI=${screenshot.filePath}",
-                                errorState.result.throwable
-                            )
-                        }
-                    )
-                }
-            } else {
-                Box(
-                    modifier = Modifier
-                        .fillMaxSize()
-                        .background(Color.Black)
-                )
             }
 
-            // Top Bar Overlay
+            // Bottom Action Bar Row
             Row(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .padding(16.dp)
-                    .align(Alignment.TopCenter),
+                    .background(Color(0xCC000000))
+                    .padding(horizontal = 16.dp, vertical = 12.dp)
+                    .align(Alignment.BottomCenter),
                 horizontalArrangement = Arrangement.SpaceBetween,
                 verticalAlignment = Alignment.CenterVertically
             ) {
-
                 Text(
                     text = "← Back",
                     color = Color.White,
@@ -1065,12 +1152,25 @@ fun ImageViewerScreen(
 
                 if (screenshots.isNotEmpty()) {
                     Text(
-                        text = "${validIndex + 1} / ${screenshots.size}",
+                        text = "${pagerState.currentPage + 1} / ${screenshots.size}",
                         color = Color.White,
                         style = MaterialTheme.typography.titleMedium,
                         fontWeight = FontWeight.Bold
                     )
                 }
+
+                Text(
+                    text = "🔄 Rotate",
+                    color = Color.White,
+                    style = MaterialTheme.typography.titleMedium,
+                    fontWeight = FontWeight.Bold,
+                    modifier = Modifier
+                        .clickable {
+                            val current = rotationMap[pagerState.currentPage] ?: 0f
+                            rotationMap[pagerState.currentPage] = (current + 90f) % 360f
+                        }
+                        .padding(8.dp)
+                )
 
                 Text(
                     text = "🗑 Delete",
@@ -1079,7 +1179,9 @@ fun ImageViewerScreen(
                     fontWeight = FontWeight.Bold,
                     modifier = Modifier
                         .clickable {
-                            val currentScreenshot = screenshots.getOrNull(validIndex)
+                            val currentScreenshot =
+                                screenshots.getOrNull(pagerState.currentPage)
+
                             if (currentScreenshot != null) {
                                 screenshotToDelete = currentScreenshot
                             }
@@ -1101,7 +1203,9 @@ fun ImageViewerScreen(
                     onClick = {
                         viewModel.deleteScreenshot(target)
                         screenshotToDelete = null
-                        onBackClick()
+                        if (screenshots.size <= 1) {
+                            onBackClick()
+                        }
                     }
                 ) {
                     Text("Delete")
@@ -1281,6 +1385,12 @@ fun AddFolderDialog(
         mutableStateOf("")
     }
 
+    val focusRequester = remember { FocusRequester() }
+
+    LaunchedEffect(Unit) {
+        focusRequester.requestFocus()
+    }
+
     AlertDialog(
 
         onDismissRequest = onDismiss,
@@ -1310,7 +1420,16 @@ fun AddFolderDialog(
                     )
                 },
 
-                singleLine = true
+                singleLine = true,
+
+                textStyle = TextStyle(
+                    color = MaterialTheme.colorScheme.onSurface,
+                    fontSize = 16.sp
+                ),
+
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .focusRequester(focusRequester)
             )
         },
 
