@@ -3,6 +3,7 @@ package com.sss.app.ui.home
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.sss.app.data.local.FolderEntity
+import com.sss.app.data.local.FolderWithCount
 import com.sss.app.data.repository.FolderRepository
 import dagger.hilt.android.lifecycle.HiltViewModel
 import kotlinx.coroutines.flow.SharingStarted
@@ -16,8 +17,8 @@ class HomeViewModel @Inject constructor(
     private val repository: FolderRepository
 ) : ViewModel() {
 
-    val folders: StateFlow<List<FolderEntity>> =
-        repository.folders.stateIn(
+    val foldersWithCount: StateFlow<List<FolderWithCount>> =
+        repository.foldersWithCount.stateIn(
             scope = viewModelScope,
             started = SharingStarted.WhileSubscribed(5_000),
             initialValue = emptyList()

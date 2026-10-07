@@ -1,13 +1,18 @@
 package com.sss.app
 
 import android.content.pm.PackageManager
+import android.net.Uri
 import android.os.Build
 import android.os.Bundle
+import android.util.Log
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.compose.setContent
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.foundation.ExperimentalFoundationApi
+import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -19,9 +24,12 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.grid.GridCells
 import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
 import androidx.compose.foundation.lazy.grid.items
+import androidx.compose.foundation.lazy.grid.itemsIndexed
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
@@ -52,6 +60,8 @@ import androidx.navigation.compose.composable
 import androidx.navigation.compose.rememberNavController
 import coil3.compose.AsyncImage
 import com.sss.app.data.local.FolderEntity
+import com.sss.app.data.local.FolderWithCount
+import com.sss.app.data.local.ScreenshotEntity
 import com.sss.app.ui.capture.CaptureViewModel
 import com.sss.app.ui.folder.FolderViewModel
 import com.sss.app.ui.home.HomeViewModel
@@ -79,7 +89,7 @@ fun SssApp() {
 
     val homeViewModel: HomeViewModel = hiltViewModel()
 
-    val folders by homeViewModel.folders.collectAsState()
+    val foldersWithCount by homeViewModel.foldersWithCount.collectAsState()
 
     NavHost(
         navController = navController,
@@ -93,21 +103,21 @@ fun SssApp() {
         composable("home") {
 
             HomeScreen(
-                folders = folders,
+                foldersWithCount = foldersWithCount,
 
                 onAddFolder = { folderName ->
                     homeViewModel.addFolder(folderName)
                 },
 
                 onFolderClick = { folderId, folderName ->
-                    navController.navigate(
-                        "folder/$folderId/$folderName"
-                    )
+                    navController.navigate("folder/$folderId/$folderName")
+                },
 
+                onFolderDelete = { folder ->
+                    homeViewModel.deleteFolder(folder)
                 },
 
                 onStartCapture = {
-
                     navController.navigate("capture")
                 }
             )
@@ -134,6 +144,38 @@ fun SssApp() {
 
                 onBackClick = {
                     navController.popBackStack()
+                },
+
+                onScreenshotClick = { index ->
+                    navController.navigate("viewer/$folderId/$index")
+                },
+
+                onStartCaptureForFolder = {
+                    navController.navigate("capture")
+                }
+            )
+        }
+
+        // ---------------------------------------------------------
+        // IMAGE VIEWER
+        // ---------------------------------------------------------
+
+        composable("viewer/{folderId}/{initialIndex}") { backStackEntry ->
+            val folderId = backStackEntry.arguments
+                ?.getString("folderId")
+                ?.toLongOrNull()
+                ?: return@composable
+
+            val initialIndex = backStackEntry.arguments
+                ?.getString("initialIndex")
+                ?.toIntOrNull()
+                ?: 0
+
+            ImageViewerScreen(
+                folderId = folderId,
+                initialIndex = initialIndex,
+                onBackClick = {
+                    navController.popBackStack()
                 }
             )
         }
@@ -145,7 +187,7 @@ fun SssApp() {
         composable("capture") {
 
             CaptureScreen(
-                folders = folders,
+                folders = foldersWithCount.map { it.folder },
 
                 onBackClick = {
                     navController.popBackStack()
@@ -162,14 +204,19 @@ fun SssApp() {
 
 @Composable
 fun HomeScreen(
-    folders: List<FolderEntity>,
+    foldersWithCount: List<FolderWithCount>,
     onAddFolder: (String) -> Unit,
     onFolderClick: (Long, String) -> Unit,
+    onFolderDelete: (FolderEntity) -> Unit,
     onStartCapture: () -> Unit
 ) {
 
     var showAddFolderDialog by remember {
         mutableStateOf(false)
+    }
+
+    var folderToDelete by remember {
+        mutableStateOf<FolderWithCount?>(null)
     }
 
     Scaffold(
@@ -227,20 +274,22 @@ fun HomeScreen(
             ) {
 
                 items(
-                    items = folders,
-                    key = { folder ->
-                        folder.id
-                    }
-                ) { folder ->
+                    items = foldersWithCount,
+                    key = { item -> item.folder.id }
+                ) { item ->
 
                     FolderCard(
-                        folder = folder,
+                        folderWithCount = item,
 
                         onClick = {
                             onFolderClick(
-                                folder.id,
-                                folder.name
+                                item.folder.id,
+                                item.folder.name
                             )
+                        },
+
+                        onLongClick = {
+                            folderToDelete = item
                         }
                     )
                 }
@@ -287,6 +336,35 @@ fun HomeScreen(
             }
         )
     }
+
+    if (folderToDelete != null) {
+        val target = folderToDelete!!
+        AlertDialog(
+            onDismissRequest = { folderToDelete = null },
+            title = { Text("Delete folder?") },
+            text = {
+                Text("This folder contains ${target.screenshotCount} screenshot${if (target.screenshotCount == 1) "" else "s"}. " +
+                        "Deleting this folder will remove all its saved screenshots from SSS.")
+            },
+            confirmButton = {
+                Button(
+                    onClick = {
+                        onFolderDelete(target.folder)
+                        folderToDelete = null
+                    }
+                ) {
+                    Text("Delete")
+                }
+            },
+            dismissButton = {
+                TextButton(
+                    onClick = { folderToDelete = null }
+                ) {
+                    Text("Cancel")
+                }
+            }
+        )
+    }
 }
 
 
@@ -327,6 +405,7 @@ fun CaptureScreen(
         if (!hasPermission) {
             permissionLauncher.launch(requiredPermission)
         }
+        viewModel.loadActiveSession()
     }
 
     var selectedFolder by remember {
@@ -337,6 +416,13 @@ fun CaptureScreen(
         mutableStateOf(false)
     }
     val activeSession by viewModel.activeSession.collectAsState()
+    val activeSessionCount by viewModel.activeSessionScreenshotCount.collectAsState()
+
+    LaunchedEffect(activeSession, folders) {
+        if (activeSession != null && selectedFolder == null) {
+            selectedFolder = folders.find { it.id == activeSession!!.folderId }
+        }
+    }
 
     Scaffold { innerPadding ->
 
@@ -365,12 +451,13 @@ fun CaptureScreen(
             )
 
             Text(
-                text = "Capture Session",
+                text = if (activeSession != null) "Capture Active" else "Capture Session",
 
                 style =
                     MaterialTheme.typography.titleLarge,
 
-                fontWeight = FontWeight.SemiBold
+                fontWeight = FontWeight.SemiBold,
+                color = if (activeSession != null) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onBackground
             )
 
             Spacer(
@@ -412,7 +499,7 @@ fun CaptureScreen(
                 }
             }
 
-            if (selectedFolder == null) {
+            if (selectedFolder == null && activeSession == null) {
 
                 Text(
                     text = "No folder selected",
@@ -447,6 +534,8 @@ fun CaptureScreen(
                 }
 
             } else {
+
+                val folderName = selectedFolder?.name ?: "Selected Folder"
 
                 Text(
                     text = "Active Folder",
@@ -486,7 +575,7 @@ fun CaptureScreen(
                         )
 
                         Text(
-                            text = selectedFolder!!.name,
+                            text = folderName,
 
                             modifier =
                                 Modifier.padding(
@@ -504,14 +593,17 @@ fun CaptureScreen(
                 )
 
                 Text(
-                    text = "Capture is ready.",
-                    style = MaterialTheme.typography.bodyLarge
+                    text = if (activeSession != null) "🟢 Capture is active in background" else "Capture is ready.",
+                    style = MaterialTheme.typography.bodyLarge,
+                    fontWeight = FontWeight.Medium
                 )
 
                 Spacer(modifier = Modifier.height(8.dp))
 
                 Text(
-                    text = "Session ID: ${activeSession?.id ?: "None"}"
+                    text = "Screenshots captured: $activeSessionCount",
+                    style = MaterialTheme.typography.titleMedium,
+                    fontWeight = FontWeight.Bold
                 )
 
                 Spacer(
@@ -519,8 +611,7 @@ fun CaptureScreen(
                 )
 
                 Text(
-                    text =
-                        "Screenshots will be assigned to this folder."
+                    text = "Screenshots taken anywhere on your device will automatically be saved into this folder."
                 )
 
                 Spacer(
@@ -530,6 +621,7 @@ fun CaptureScreen(
                 Button(
                     onClick = {
                         viewModel.stopCapture()
+                        selectedFolder = null
                         onBackClick()
                     },
 
@@ -616,17 +708,29 @@ fun CaptureScreen(
 // FOLDER SCREEN
 // ================================================================
 
+@OptIn(ExperimentalFoundationApi::class)
 @Composable
 fun FolderScreen(
     folderId: Long,
     folderName: String,
     onBackClick: () -> Unit,
+    onScreenshotClick: (Int) -> Unit,
+    onStartCaptureForFolder: () -> Unit,
     viewModel: FolderViewModel = hiltViewModel()
 ) {
 
-    val screenshots by viewModel
-        .screenshots(folderId)
-        .collectAsState()
+    val screenshotsFlow = remember(folderId) {
+        viewModel.screenshots(folderId)
+    }
+    val screenshots by screenshotsFlow.collectAsState()
+
+    var screenshotToDelete by remember {
+        mutableStateOf<ScreenshotEntity?>(null)
+    }
+
+    var screenshotForAction by remember {
+        mutableStateOf<Pair<ScreenshotEntity, Int>?>(null)
+    }
 
     Scaffold { innerPadding ->
 
@@ -660,7 +764,9 @@ fun FolderScreen(
                 if (screenshots.isEmpty()) {
 
                     Column(
-                        modifier = Modifier.fillMaxSize(),
+                        modifier = Modifier
+                            .fillMaxSize()
+                            .padding(24.dp),
                         horizontalAlignment = Alignment.CenterHorizontally,
                         verticalArrangement = Arrangement.Center
                     ) {
@@ -676,7 +782,8 @@ fun FolderScreen(
 
                         Text(
                             text = "No screenshots yet",
-                            style = MaterialTheme.typography.titleMedium
+                            style = MaterialTheme.typography.titleMedium,
+                            fontWeight = FontWeight.Bold
                         )
 
                         Spacer(
@@ -684,19 +791,19 @@ fun FolderScreen(
                         )
 
                         Text(
-                            text = "Screenshots will appear here"
+                            text = "Start a capture session and take screenshots to add them to this folder.",
+                            style = MaterialTheme.typography.bodyMedium,
+                            color = Color.Gray
                         )
 
                         Spacer(
-                            modifier = Modifier.height(20.dp)
+                            modifier = Modifier.height(24.dp)
                         )
 
                         Button(
-                            onClick = {
-                                viewModel.addTestScreenshot(folderId)
-                            }
+                            onClick = onStartCaptureForFolder
                         ) {
-                            Text("Add Test Screenshot")
+                            Text("Start Capture")
                         }
                     }
 
@@ -707,7 +814,7 @@ fun FolderScreen(
                     ) {
 
                         Text(
-                            text = "${screenshots.size} screenshots",
+                            text = "${screenshots.size} screenshot${if (screenshots.size == 1) "" else "s"}",
                             style = MaterialTheme.typography.titleMedium,
                             modifier = Modifier.padding(horizontal = 20.dp, vertical = 8.dp)
                         )
@@ -722,19 +829,35 @@ fun FolderScreen(
                             verticalArrangement = Arrangement.spacedBy(8.dp)
                         ) {
 
-                            items(
+                            itemsIndexed(
                                 items = screenshots,
-                                key = { screenshot -> screenshot.id }
-                            ) { screenshot ->
+                                key = { _, screenshot -> screenshot.id }
+                            ) { index, screenshot ->
 
                                 Card(
                                     modifier = Modifier
                                         .fillMaxWidth()
-                                        .aspectRatio(1f),
+                                        .aspectRatio(1f)
+                                        .combinedClickable(
+                                            onClick = {
+                                                onScreenshotClick(index)
+                                            },
+                                            onLongClick = {
+                                                screenshotForAction = Pair(screenshot, index)
+                                            }
+                                        ),
                                     elevation = CardDefaults.cardElevation(defaultElevation = 2.dp)
                                 ) {
+                                    val imageModel = remember(screenshot.filePath) {
+                                        if (screenshot.filePath.startsWith("content://") || screenshot.filePath.startsWith("file://")) {
+                                            Uri.parse(screenshot.filePath)
+                                        } else {
+                                            screenshot.filePath
+                                        }
+                                    }
+
                                     AsyncImage(
-                                        model = screenshot.filePath,
+                                        model = imageModel,
                                         contentDescription = "Screenshot #${screenshot.sequenceNumber}",
                                         contentScale = ContentScale.Crop,
                                         modifier = Modifier.fillMaxSize()
@@ -747,26 +870,241 @@ fun FolderScreen(
             }
         }
     }
+
+    if (screenshotForAction != null) {
+        val (screenshot, index) = screenshotForAction!!
+        AlertDialog(
+            onDismissRequest = { screenshotForAction = null },
+            title = { Text("Screenshot #${screenshot.sequenceNumber}") },
+            text = { Text("Choose an action for this screenshot.") },
+            confirmButton = {
+                Button(
+                    onClick = {
+                        screenshotForAction = null
+                        onScreenshotClick(index)
+                    }
+                ) {
+                    Text("View")
+                }
+            },
+            dismissButton = {
+                TextButton(
+                    onClick = {
+                        screenshotForAction = null
+                        screenshotToDelete = screenshot
+                    }
+                ) {
+                    Text("Delete", color = MaterialTheme.colorScheme.error)
+                }
+            }
+        )
+    }
+
+    if (screenshotToDelete != null) {
+        val target = screenshotToDelete!!
+        AlertDialog(
+            onDismissRequest = { screenshotToDelete = null },
+            title = { Text("Delete screenshot?") },
+            text = { Text("This screenshot will be removed from this folder.") },
+            confirmButton = {
+                Button(
+                    onClick = {
+                        viewModel.deleteScreenshot(target)
+                        screenshotToDelete = null
+                    }
+                ) {
+                    Text("Delete")
+                }
+            },
+            dismissButton = {
+                TextButton(
+                    onClick = { screenshotToDelete = null }
+                ) {
+                    Text("Cancel")
+                }
+            }
+        )
+    }
 }
+
+
+// ================================================================
+// IMAGE VIEWER SCREEN
+// ================================================================
+
+@Composable
+fun ImageViewerScreen(
+    folderId: Long,
+    initialIndex: Int,
+    onBackClick: () -> Unit,
+    viewModel: FolderViewModel = hiltViewModel()
+) {
+
+    val screenshotsFlow = remember(folderId) {
+        viewModel.screenshots(folderId)
+    }
+    val screenshots by screenshotsFlow.collectAsState()
+
+    var screenshotToDelete by remember { mutableStateOf<ScreenshotEntity?>(null) }
+
+    val validIndex = if (screenshots.isNotEmpty()) {
+        initialIndex.coerceIn(0, screenshots.size - 1)
+    } else {
+        0
+    }
+
+    Log.d("SSS_VIEWER", "viewer composition index=$validIndex")
+
+    Scaffold(
+        modifier = Modifier.fillMaxSize(),
+        containerColor = Color.Black
+    ) { innerPadding ->
+
+        Box(
+            modifier = Modifier
+                .fillMaxSize()
+                .padding(innerPadding)
+                .background(Color.Black)
+        ) {
+
+            val screenshot = screenshots.getOrNull(validIndex)
+
+            if (screenshot != null) {
+                val imageModel = remember(screenshot.filePath) {
+                    if (screenshot.filePath.startsWith("content://") || screenshot.filePath.startsWith("file://")) {
+                        Uri.parse(screenshot.filePath)
+                    } else {
+                        screenshot.filePath
+                    }
+                }
+
+                Log.d("SSS_VIEWER", "loading URI=${screenshot.filePath}")
+
+                Box(
+                    modifier = Modifier.fillMaxSize(),
+                    contentAlignment = Alignment.Center
+                ) {
+                    AsyncImage(
+                        model = imageModel,
+                        contentDescription = "Screenshot #${screenshot.sequenceNumber}",
+                        contentScale = ContentScale.Fit,
+                        modifier = Modifier.fillMaxSize(),
+                        onSuccess = {
+                            Log.d("SSS_VIEWER", "IMAGE SUCCESS URI=${screenshot.filePath}")
+                        },
+                        onError = { errorState ->
+                            Log.e(
+                                "SSS_VIEWER",
+                                "IMAGE ERROR URI=${screenshot.filePath}",
+                                errorState.result.throwable
+                            )
+                        }
+                    )
+                }
+            } else {
+                Box(
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .background(Color.Black)
+                )
+            }
+
+            // Top Bar Overlay
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(16.dp)
+                    .align(Alignment.TopCenter),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+
+                Text(
+                    text = "← Back",
+                    color = Color.White,
+                    style = MaterialTheme.typography.titleMedium,
+                    fontWeight = FontWeight.Bold,
+                    modifier = Modifier
+                        .clickable { onBackClick() }
+                        .padding(8.dp)
+                )
+
+                if (screenshots.isNotEmpty()) {
+                    Text(
+                        text = "${validIndex + 1} / ${screenshots.size}",
+                        color = Color.White,
+                        style = MaterialTheme.typography.titleMedium,
+                        fontWeight = FontWeight.Bold
+                    )
+                }
+
+                Text(
+                    text = "🗑 Delete",
+                    color = Color(0xFFFF6B6B),
+                    style = MaterialTheme.typography.titleMedium,
+                    fontWeight = FontWeight.Bold,
+                    modifier = Modifier
+                        .clickable {
+                            val currentScreenshot = screenshots.getOrNull(validIndex)
+                            if (currentScreenshot != null) {
+                                screenshotToDelete = currentScreenshot
+                            }
+                        }
+                        .padding(8.dp)
+                )
+            }
+        }
+    }
+
+    if (screenshotToDelete != null) {
+        val target = screenshotToDelete!!
+        AlertDialog(
+            onDismissRequest = { screenshotToDelete = null },
+            title = { Text("Delete screenshot?") },
+            text = { Text("This screenshot will be removed from this folder.") },
+            confirmButton = {
+                Button(
+                    onClick = {
+                        viewModel.deleteScreenshot(target)
+                        screenshotToDelete = null
+                        onBackClick()
+                    }
+                ) {
+                    Text("Delete")
+                }
+            },
+            dismissButton = {
+                TextButton(
+                    onClick = { screenshotToDelete = null }
+                ) {
+                    Text("Cancel")
+                }
+            }
+        )
+    }
+}
+
 
 // ================================================================
 // FOLDER CARD
 // ================================================================
 
+@OptIn(ExperimentalFoundationApi::class)
 @Composable
 fun FolderCard(
-    folder: FolderEntity,
-    onClick: () -> Unit
+    folderWithCount: FolderWithCount,
+    onClick: () -> Unit,
+    onLongClick: () -> Unit
 ) {
 
     Card(
         modifier = Modifier
             .fillMaxWidth()
             .height(120.dp)
-            .clickable {
-
-                onClick()
-            },
+            .combinedClickable(
+                onClick = onClick,
+                onLongClick = onLongClick
+            ),
 
         elevation =
             CardDefaults.cardElevation(
@@ -774,44 +1112,65 @@ fun FolderCard(
             )
     ) {
 
-        Column(
+        Row(
             modifier = Modifier
                 .fillMaxSize()
-                .padding(16.dp),
-
-            verticalArrangement =
-                Arrangement.Center
+                .padding(12.dp),
+            verticalAlignment = Alignment.CenterVertically
         ) {
 
-            Text(
-                text = "📁",
+            if (!folderWithCount.latestScreenshotPath.isNullOrEmpty()) {
+                val thumbnailModel = remember(folderWithCount.latestScreenshotPath) {
+                    val path = folderWithCount.latestScreenshotPath
+                    if (path != null && (path.startsWith("content://") || path.startsWith("file://"))) {
+                        Uri.parse(path)
+                    } else {
+                        path
+                    }
+                }
 
-                style =
-                    MaterialTheme.typography
-                        .headlineSmall
-            )
+                Card(
+                    modifier = Modifier
+                        .size(56.dp)
+                        .aspectRatio(1f),
+                    elevation = CardDefaults.cardElevation(defaultElevation = 1.dp)
+                ) {
+                    AsyncImage(
+                        model = thumbnailModel,
+                        contentDescription = folderWithCount.folder.name,
+                        contentScale = ContentScale.Crop,
+                        modifier = Modifier.fillMaxSize()
+                    )
+                }
 
-            Spacer(
-                modifier =
-                    Modifier.height(6.dp)
-            )
+                Spacer(modifier = Modifier.width(12.dp))
+            } else {
+                Text(
+                    text = "📁",
+                    style = MaterialTheme.typography.headlineSmall
+                )
 
-            Text(
-                text = folder.name,
+                Spacer(modifier = Modifier.width(12.dp))
+            }
 
-                fontWeight =
-                    FontWeight.Bold
-            )
+            Column(
+                verticalArrangement = Arrangement.Center
+            ) {
 
-            Text(
-                text = "0 screenshots",
+                Text(
+                    text = folderWithCount.folder.name,
+                    fontWeight = FontWeight.Bold,
+                    style = MaterialTheme.typography.titleMedium
+                )
 
-                style =
-                    MaterialTheme.typography
-                        .bodySmall,
+                Spacer(modifier = Modifier.height(4.dp))
 
-                color = Color.Gray
-            )
+                Text(
+                    text = "${folderWithCount.screenshotCount} screenshot${if (folderWithCount.screenshotCount == 1) "" else "s"}",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = Color.Gray
+                )
+            }
         }
     }
 }

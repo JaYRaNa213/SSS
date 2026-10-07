@@ -26,6 +26,12 @@ class FolderViewModel @Inject constructor(
             )
     }
 
+    fun deleteScreenshot(screenshot: ScreenshotEntity) {
+        viewModelScope.launch {
+            repository.deleteScreenshot(screenshot)
+        }
+    }
+
     fun addTestScreenshot(folderId: Long) {
         viewModelScope.launch {
 
