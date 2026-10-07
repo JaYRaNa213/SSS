@@ -1,9 +1,11 @@
 package com.sss.app
 
+import android.content.Intent
 import android.content.pm.PackageManager
 import android.net.Uri
 import android.os.Build
 import android.os.Bundle
+import android.provider.Settings
 import android.util.Log
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.rememberLauncherForActivityResult
@@ -59,6 +61,7 @@ import androidx.navigation.compose.NavHost
 import androidx.navigation.compose.composable
 import androidx.navigation.compose.rememberNavController
 import coil3.compose.AsyncImage
+import com.sss.app.capture.OverlayBubbleService
 import com.sss.app.data.local.FolderEntity
 import com.sss.app.data.local.FolderWithCount
 import com.sss.app.data.local.ScreenshotEntity
@@ -401,13 +404,6 @@ fun CaptureScreen(
         hasPermission = isGranted
     }
 
-    LaunchedEffect(Unit) {
-        if (!hasPermission) {
-            permissionLauncher.launch(requiredPermission)
-        }
-        viewModel.loadActiveSession()
-    }
-
     var selectedFolder by remember {
         mutableStateOf<FolderEntity?>(null)
     }
@@ -415,12 +411,35 @@ fun CaptureScreen(
     var showFolderDialog by remember {
         mutableStateOf(false)
     }
+
+    var pendingFolder by remember {
+        mutableStateOf<FolderEntity?>(null)
+    }
+
+    val overlayPermissionLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.StartActivityForResult()
+    ) { _ ->
+        if (Settings.canDrawOverlays(context)) {
+            pendingFolder?.let { folder ->
+                selectedFolder = folder
+                viewModel.startCapture(folder.id)
+                OverlayBubbleService.showBubble(context)
+                pendingFolder = null
+                showFolderDialog = false
+            }
+        } else {
+            pendingFolder = null
+        }
+    }
     val activeSession by viewModel.activeSession.collectAsState()
     val activeSessionCount by viewModel.activeSessionScreenshotCount.collectAsState()
 
     LaunchedEffect(activeSession, folders) {
         if (activeSession != null && selectedFolder == null) {
             selectedFolder = folders.find { it.id == activeSession!!.folderId }
+        }
+        if (activeSession != null && Settings.canDrawOverlays(context)) {
+            OverlayBubbleService.showBubble(context)
         }
     }
 
@@ -444,7 +463,10 @@ fun CaptureScreen(
                 modifier = Modifier
                     .fillMaxWidth()
                     .clickable {
-
+                        if (activeSession != null) {
+                            viewModel.stopCapture()
+                            OverlayBubbleService.hideBubble(context)
+                        }
                         onBackClick()
                     }
                     .padding(bottom = 30.dp)
@@ -621,6 +643,7 @@ fun CaptureScreen(
                 Button(
                     onClick = {
                         viewModel.stopCapture()
+                        OverlayBubbleService.hideBubble(context)
                         selectedFolder = null
                         onBackClick()
                     },
@@ -674,9 +697,20 @@ fun CaptureScreen(
                                 modifier = Modifier
                                     .fillMaxWidth()
                                     .clickable {
-                                        selectedFolder = folder
-                                        viewModel.startCapture(folder.id)
-                                        showFolderDialog = false
+                                        if (Settings.canDrawOverlays(context)) {
+                                            selectedFolder = folder
+                                            viewModel.startCapture(folder.id)
+                                            showFolderDialog = false
+                                            OverlayBubbleService.showBubble(context)
+                                        } else {
+                                            pendingFolder = folder
+                                            showFolderDialog = false
+                                            val intent = Intent(
+                                                Settings.ACTION_MANAGE_OVERLAY_PERMISSION,
+                                                Uri.parse("package:${context.packageName}")
+                                            )
+                                            overlayPermissionLauncher.launch(intent)
+                                        }
                                     }
                                     .padding(16.dp)
                             )
