@@ -34,19 +34,31 @@ import androidx.compose.foundation.lazy.grid.GridCells
 import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
 import androidx.compose.foundation.lazy.grid.items
 import androidx.compose.foundation.lazy.grid.itemsIndexed
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.ArrowBack
+import androidx.compose.material.icons.filled.Close
+import androidx.compose.material.icons.filled.Delete
+import androidx.compose.material.icons.filled.PictureAsPdf
+import androidx.compose.material.icons.filled.RotateRight
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
+import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
+import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
+import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateListOf
 import androidx.compose.runtime.mutableStateMapOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -249,7 +261,7 @@ fun HomeScreen(
                 verticalAlignment = Alignment.CenterVertically
             ) {
                 Text(
-                    text = "SSS",
+                    text = "4S",
                     style = MaterialTheme.typography.headlineMedium,
                     fontWeight = FontWeight.Bold
                 )
@@ -767,17 +779,13 @@ fun FolderScreen(
     }
     val screenshots by screenshotsFlow.collectAsState()
 
-    var screenshotToDelete by remember {
-        mutableStateOf<ScreenshotEntity?>(null)
-    }
+    val selectedScreenshotIds = remember { mutableStateListOf<Long>() }
 
-    var screenshotForAction by remember {
-        mutableStateOf<Pair<ScreenshotEntity, Int>?>(null)
-    }
+    var showDeleteConfirmDialog by remember { mutableStateOf(false) }
+    var showPdfDialog by remember { mutableStateOf(false) }
+    var screenshotsForPdf by remember { mutableStateOf<List<ScreenshotEntity>>(emptyList()) }
 
-    var showPdfDialog by remember {
-        mutableStateOf(false)
-    }
+    val isSelectionMode = selectedScreenshotIds.isNotEmpty()
 
     Scaffold { innerPadding ->
 
@@ -787,31 +795,86 @@ fun FolderScreen(
                 .padding(innerPadding)
         ) {
 
+            // Top App Bar
             Row(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .padding(20.dp),
+                    .padding(horizontal = 16.dp, vertical = 12.dp),
                 horizontalArrangement = Arrangement.SpaceBetween,
                 verticalAlignment = Alignment.CenterVertically
             ) {
-                Text(
-                    text = "←  $folderName",
-
-                    style = MaterialTheme.typography.headlineSmall,
-
-                    fontWeight = FontWeight.Bold,
-
-                    modifier = Modifier
-                        .clickable {
-                            onBackClick()
+                if (isSelectionMode) {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        IconButton(
+                            onClick = { selectedScreenshotIds.clear() }
+                        ) {
+                            Icon(
+                                imageVector = Icons.Default.Close,
+                                contentDescription = "Close selection"
+                            )
                         }
-                )
+                        Spacer(modifier = Modifier.width(8.dp))
+                        Text(
+                            text = "${selectedScreenshotIds.size} selected",
+                            style = MaterialTheme.typography.titleLarge,
+                            fontWeight = FontWeight.Bold
+                        )
+                    }
 
-                if (screenshots.isNotEmpty()) {
-                    Button(
-                        onClick = { showPdfDialog = true }
-                    ) {
-                        Text("📄 Create PDF")
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        IconButton(
+                            onClick = {
+                                val selectedList = screenshots.filter { selectedScreenshotIds.contains(it.id) }
+                                screenshotsForPdf = selectedList
+                                showPdfDialog = true
+                            }
+                        ) {
+                            Icon(
+                                imageVector = Icons.Default.PictureAsPdf,
+                                contentDescription = "Create PDF from selected"
+                            )
+                        }
+
+                        IconButton(
+                            onClick = { showDeleteConfirmDialog = true }
+                        ) {
+                            Icon(
+                                imageVector = Icons.Default.Delete,
+                                contentDescription = "Delete selected screenshots",
+                                tint = MaterialTheme.colorScheme.error
+                            )
+                        }
+                    }
+                } else {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        IconButton(
+                            onClick = onBackClick
+                        ) {
+                            Icon(
+                                imageVector = Icons.Default.ArrowBack,
+                                contentDescription = "Back"
+                            )
+                        }
+                        Spacer(modifier = Modifier.width(8.dp))
+                        Text(
+                            text = folderName,
+                            style = MaterialTheme.typography.headlineSmall,
+                            fontWeight = FontWeight.Bold
+                        )
+                    }
+
+                    if (screenshots.isNotEmpty()) {
+                        IconButton(
+                            onClick = {
+                                screenshotsForPdf = screenshots
+                                showPdfDialog = true
+                            }
+                        ) {
+                            Icon(
+                                imageVector = Icons.Default.PictureAsPdf,
+                                contentDescription = "Create PDF"
+                            )
+                        }
                     }
                 }
             }
@@ -877,7 +940,7 @@ fun FolderScreen(
                         Text(
                             text = "${screenshots.size} screenshot${if (screenshots.size == 1) "" else "s"}",
                             style = MaterialTheme.typography.titleMedium,
-                            modifier = Modifier.padding(horizontal = 20.dp, vertical = 8.dp)
+                            modifier = Modifier.padding(horizontal = 20.dp, vertical = 4.dp)
                         )
 
                         LazyVerticalGrid(
@@ -895,34 +958,77 @@ fun FolderScreen(
                                 key = { _, screenshot -> screenshot.id }
                             ) { index, screenshot ->
 
+                                val isSelected = selectedScreenshotIds.contains(screenshot.id)
+                                val selectedOrder = if (isSelected) selectedScreenshotIds.indexOf(screenshot.id) + 1 else 0
+
                                 Card(
                                     modifier = Modifier
                                         .fillMaxWidth()
                                         .aspectRatio(1f)
                                         .combinedClickable(
                                             onClick = {
-                                                onScreenshotClick(index)
+                                                if (isSelectionMode) {
+                                                    if (isSelected) {
+                                                        selectedScreenshotIds.remove(screenshot.id)
+                                                    } else {
+                                                        selectedScreenshotIds.add(screenshot.id)
+                                                    }
+                                                } else {
+                                                    onScreenshotClick(index)
+                                                }
                                             },
                                             onLongClick = {
-                                                screenshotForAction = Pair(screenshot, index)
+                                                if (!isSelected) {
+                                                    selectedScreenshotIds.add(screenshot.id)
+                                                }
                                             }
                                         ),
-                                    elevation = CardDefaults.cardElevation(defaultElevation = 2.dp)
+                                    elevation = CardDefaults.cardElevation(
+                                        defaultElevation = if (isSelected) 6.dp else 2.dp
+                                    )
                                 ) {
-                                    val imageModel = remember(screenshot.filePath) {
-                                        if (screenshot.filePath.startsWith("content://") || screenshot.filePath.startsWith("file://")) {
-                                            Uri.parse(screenshot.filePath)
-                                        } else {
-                                            screenshot.filePath
+                                    Box(modifier = Modifier.fillMaxSize()) {
+                                        val imageModel = remember(screenshot.filePath) {
+                                            if (screenshot.filePath.startsWith("content://") || screenshot.filePath.startsWith("file://")) {
+                                                Uri.parse(screenshot.filePath)
+                                            } else {
+                                                screenshot.filePath
+                                            }
+                                        }
+
+                                        AsyncImage(
+                                            model = imageModel,
+                                            contentDescription = "Screenshot #${screenshot.sequenceNumber}",
+                                            contentScale = ContentScale.Crop,
+                                            modifier = Modifier.fillMaxSize()
+                                        )
+
+                                        if (isSelected) {
+                                            Box(
+                                                modifier = Modifier
+                                                    .fillMaxSize()
+                                                    .background(Color.Black.copy(alpha = 0.4f))
+                                            )
+
+                                            Surface(
+                                                shape = RoundedCornerShape(12.dp),
+                                                color = MaterialTheme.colorScheme.primary,
+                                                modifier = Modifier
+                                                    .align(Alignment.TopEnd)
+                                                    .padding(6.dp)
+                                                    .size(24.dp)
+                                            ) {
+                                                Box(contentAlignment = Alignment.Center) {
+                                                    Text(
+                                                        text = "$selectedOrder",
+                                                        color = MaterialTheme.colorScheme.onPrimary,
+                                                        fontSize = 12.sp,
+                                                        fontWeight = FontWeight.Bold
+                                                    )
+                                                }
+                                            }
                                         }
                                     }
-
-                                    AsyncImage(
-                                        model = imageModel,
-                                        contentDescription = "Screenshot #${screenshot.sequenceNumber}",
-                                        contentScale = ContentScale.Crop,
-                                        modifier = Modifier.fillMaxSize()
-                                    )
                                 }
                             }
                         }
@@ -932,46 +1038,22 @@ fun FolderScreen(
         }
     }
 
-    if (screenshotForAction != null) {
-        val (screenshot, index) = screenshotForAction!!
+    if (showDeleteConfirmDialog) {
+        val count = selectedScreenshotIds.size
         AlertDialog(
-            onDismissRequest = { screenshotForAction = null },
-            title = { Text("Screenshot #${screenshot.sequenceNumber}") },
-            text = { Text("Choose an action for this screenshot.") },
+            onDismissRequest = { showDeleteConfirmDialog = false },
+            title = { Text("Delete $count screenshot${if (count == 1) "" else "s"}?") },
+            text = { Text("These screenshots will be removed from this folder.") },
             confirmButton = {
                 Button(
+                    colors = ButtonDefaults.buttonColors(
+                        containerColor = MaterialTheme.colorScheme.error
+                    ),
                     onClick = {
-                        screenshotForAction = null
-                        onScreenshotClick(index)
-                    }
-                ) {
-                    Text("View")
-                }
-            },
-            dismissButton = {
-                TextButton(
-                    onClick = {
-                        screenshotForAction = null
-                        screenshotToDelete = screenshot
-                    }
-                ) {
-                    Text("Delete", color = MaterialTheme.colorScheme.error)
-                }
-            }
-        )
-    }
-
-    if (screenshotToDelete != null) {
-        val target = screenshotToDelete!!
-        AlertDialog(
-            onDismissRequest = { screenshotToDelete = null },
-            title = { Text("Delete screenshot?") },
-            text = { Text("This screenshot will be removed from this folder.") },
-            confirmButton = {
-                Button(
-                    onClick = {
-                        viewModel.deleteScreenshot(target)
-                        screenshotToDelete = null
+                        val targets = screenshots.filter { selectedScreenshotIds.contains(it.id) }
+                        viewModel.deleteScreenshots(targets)
+                        selectedScreenshotIds.clear()
+                        showDeleteConfirmDialog = false
                     }
                 ) {
                     Text("Delete")
@@ -979,7 +1061,7 @@ fun FolderScreen(
             },
             dismissButton = {
                 TextButton(
-                    onClick = { screenshotToDelete = null }
+                    onClick = { showDeleteConfirmDialog = false }
                 ) {
                     Text("Cancel")
                 }
@@ -990,7 +1072,7 @@ fun FolderScreen(
     if (showPdfDialog) {
         PdfExportDialog(
             folderName = folderName,
-            screenshots = screenshots,
+            screenshots = screenshotsForPdf,
             onDismiss = { showPdfDialog = false }
         )
     }
@@ -1028,21 +1110,16 @@ fun ImageViewerScreen(
                 .fillMaxSize()
                 .background(Color.Black)
         ) {
-            Row(
+            IconButton(
+                onClick = onBackClick,
                 modifier = Modifier
-                    .fillMaxWidth()
+                    .align(Alignment.TopStart)
                     .padding(16.dp)
-                    .align(Alignment.TopCenter),
-                horizontalArrangement = Arrangement.Start
             ) {
-                Text(
-                    text = "← Back",
-                    color = Color.White,
-                    style = MaterialTheme.typography.titleMedium,
-                    fontWeight = FontWeight.Bold,
-                    modifier = Modifier
-                        .clickable { onBackClick() }
-                        .padding(8.dp)
+                Icon(
+                    imageVector = Icons.Default.ArrowBack,
+                    contentDescription = "Back",
+                    tint = Color.White
                 )
             }
         }
@@ -1065,8 +1142,6 @@ fun ImageViewerScreen(
         }
     }
 
-    Log.d("SSS_VIEWER", "pager currentPage=${pagerState.currentPage}, total=${screenshots.size}")
-
     Scaffold(
         modifier = Modifier.fillMaxSize(),
         containerColor = Color.Black
@@ -1081,9 +1156,7 @@ fun ImageViewerScreen(
 
             HorizontalPager(
                 state = pagerState,
-                modifier = Modifier
-                    .fillMaxSize()
-                    .padding(bottom = 60.dp)
+                modifier = Modifier.fillMaxSize()
             ) { page ->
 
                 val screenshot = screenshots.getOrNull(page)
@@ -1130,25 +1203,26 @@ fun ImageViewerScreen(
                 }
             }
 
-            // Bottom Action Bar Row
+            // Top Bar Overlay
             Row(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .background(Color(0xCC000000))
-                    .padding(horizontal = 16.dp, vertical = 12.dp)
-                    .align(Alignment.BottomCenter),
+                    .background(Color(0x88000000))
+                    .padding(horizontal = 12.dp, vertical = 8.dp)
+                    .align(Alignment.TopCenter),
                 horizontalArrangement = Arrangement.SpaceBetween,
                 verticalAlignment = Alignment.CenterVertically
             ) {
-                Text(
-                    text = "← Back",
-                    color = Color.White,
-                    style = MaterialTheme.typography.titleMedium,
-                    fontWeight = FontWeight.Bold,
-                    modifier = Modifier
-                        .clickable { onBackClick() }
-                        .padding(8.dp)
-                )
+
+                IconButton(
+                    onClick = onBackClick
+                ) {
+                    Icon(
+                        imageVector = Icons.Default.ArrowBack,
+                        contentDescription = "Back",
+                        tint = Color.White
+                    )
+                }
 
                 if (screenshots.isNotEmpty()) {
                     Text(
@@ -1159,26 +1233,22 @@ fun ImageViewerScreen(
                     )
                 }
 
-                Text(
-                    text = "🔄 Rotate",
-                    color = Color.White,
-                    style = MaterialTheme.typography.titleMedium,
-                    fontWeight = FontWeight.Bold,
-                    modifier = Modifier
-                        .clickable {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    IconButton(
+                        onClick = {
                             val current = rotationMap[pagerState.currentPage] ?: 0f
                             rotationMap[pagerState.currentPage] = (current + 90f) % 360f
                         }
-                        .padding(8.dp)
-                )
+                    ) {
+                        Icon(
+                            imageVector = Icons.Default.RotateRight,
+                            contentDescription = "Rotate image",
+                            tint = Color.White
+                        )
+                    }
 
-                Text(
-                    text = "🗑 Delete",
-                    color = Color(0xFFFF6B6B),
-                    style = MaterialTheme.typography.titleMedium,
-                    fontWeight = FontWeight.Bold,
-                    modifier = Modifier
-                        .clickable {
+                    IconButton(
+                        onClick = {
                             val currentScreenshot =
                                 screenshots.getOrNull(pagerState.currentPage)
 
@@ -1186,8 +1256,14 @@ fun ImageViewerScreen(
                                 screenshotToDelete = currentScreenshot
                             }
                         }
-                        .padding(8.dp)
-                )
+                    ) {
+                        Icon(
+                            imageVector = Icons.Default.Delete,
+                            contentDescription = "Delete screenshot",
+                            tint = Color.White
+                        )
+                    }
+                }
             }
         }
     }
@@ -1196,10 +1272,13 @@ fun ImageViewerScreen(
         val target = screenshotToDelete!!
         AlertDialog(
             onDismissRequest = { screenshotToDelete = null },
-            title = { Text("Delete screenshot?") },
+            title = { Text("Delete this screenshot?") },
             text = { Text("This screenshot will be removed from this folder.") },
             confirmButton = {
                 Button(
+                    colors = ButtonDefaults.buttonColors(
+                        containerColor = MaterialTheme.colorScheme.error
+                    ),
                     onClick = {
                         viewModel.deleteScreenshot(target)
                         screenshotToDelete = null

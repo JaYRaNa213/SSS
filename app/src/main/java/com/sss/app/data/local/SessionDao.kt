@@ -4,6 +4,7 @@ import androidx.room.Dao
 import androidx.room.Insert
 import androidx.room.OnConflictStrategy
 import androidx.room.Query
+import kotlinx.coroutines.flow.Flow
 
 @Dao
 interface SessionDao {
@@ -17,6 +18,20 @@ interface SessionDao {
         LIMIT 1
     """)
     suspend fun getActiveSession(): CaptureSessionEntity?
+
+    @Query("""
+        SELECT * FROM capture_sessions
+        WHERE id = 1 AND isActive = 1
+        LIMIT 1
+    """)
+    fun observeActiveSession(): Flow<CaptureSessionEntity?>
+
+    @Query("""
+        UPDATE capture_sessions
+        SET folderId = :folderId
+        WHERE id = 1 AND isActive = 1
+    """)
+    suspend fun switchActiveFolder(folderId: Long)
 
     @Query("""
         UPDATE capture_sessions

@@ -15,9 +15,8 @@ class FolderRepository(
     val foldersWithCount: Flow<List<FolderWithCount>> =
         folderDao.getFoldersWithCount()
 
-    suspend fun addFolder(name: String) {
-
-        folderDao.insertFolder(
+    suspend fun addFolder(name: String): Long {
+        return folderDao.insertFolder(
             FolderEntity(
                 name = name
             )
@@ -25,12 +24,10 @@ class FolderRepository(
     }
 
     suspend fun updateFolder(folder: FolderEntity) {
-
         folderDao.updateFolder(folder)
     }
 
     suspend fun deleteFolder(folder: FolderEntity) {
-
         folderDao.deleteFolder(folder)
     }
 }
