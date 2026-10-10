@@ -11,10 +11,10 @@ import androidx.activity.ComponentActivity
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.compose.setContent
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
-import androidx.compose.foundation.pager.HorizontalPager
-import androidx.compose.foundation.pager.rememberPagerState
+import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.layout.Arrangement
@@ -30,15 +30,23 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.grid.GridCells
 import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
 import androidx.compose.foundation.lazy.grid.items
 import androidx.compose.foundation.lazy.grid.itemsIndexed
+import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.pager.HorizontalPager
+import androidx.compose.foundation.pager.rememberPagerState
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.ArrowBack
+import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Delete
+import androidx.compose.material.icons.filled.Folder
 import androidx.compose.material.icons.filled.PictureAsPdf
 import androidx.compose.material.icons.filled.RotateRight
 import androidx.compose.material3.AlertDialog
@@ -110,9 +118,7 @@ class MainActivity : ComponentActivity() {
 fun SssApp() {
 
     val navController = rememberNavController()
-
     val homeViewModel: HomeViewModel = hiltViewModel()
-
     val foldersWithCount by homeViewModel.foldersWithCount.collectAsState()
 
     NavHost(
@@ -139,10 +145,6 @@ fun SssApp() {
 
                 onFolderDelete = { folder ->
                     homeViewModel.deleteFolder(folder)
-                },
-
-                onStartCapture = {
-                    navController.navigate("capture")
                 }
             )
         }
@@ -175,7 +177,7 @@ fun SssApp() {
                 },
 
                 onStartCaptureForFolder = {
-                    navController.navigate("capture")
+                    navController.popBackStack()
                 }
             )
         }
@@ -204,15 +206,10 @@ fun SssApp() {
             )
         }
 
-        // ---------------------------------------------------------
-        // CAPTURE
-        // ---------------------------------------------------------
-
+        // Keep capture route for backwards compatibility if needed
         composable("capture") {
-
             CaptureScreen(
                 folders = foldersWithCount.map { it.folder },
-
                 onBackClick = {
                     navController.popBackStack()
                 }
@@ -232,8 +229,18 @@ fun HomeScreen(
     onAddFolder: (String) -> Unit,
     onFolderClick: (Long, String) -> Unit,
     onFolderDelete: (FolderEntity) -> Unit,
-    onStartCapture: () -> Unit
+    captureViewModel: CaptureViewModel = hiltViewModel()
 ) {
+    val context = LocalContext.current
+    val activeSession by captureViewModel.activeSession.collectAsState()
+
+    var selectedCaptureFolderId by remember {
+        mutableStateOf<Long?>(null)
+    }
+
+    var pendingFolderIdForOverlay by remember {
+        mutableStateOf<Long?>(null)
+    }
 
     var showAddFolderDialog by remember {
         mutableStateOf(false)
@@ -243,8 +250,40 @@ fun HomeScreen(
         mutableStateOf<FolderWithCount?>(null)
     }
 
+    val overlayPermissionLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.StartActivityForResult()
+    ) { _ ->
+        if (Settings.canDrawOverlays(context)) {
+            pendingFolderIdForOverlay?.let { folderId ->
+                captureViewModel.startCapture(folderId)
+                OverlayBubbleService.showBubble(context)
+                pendingFolderIdForOverlay = null
+            }
+        } else {
+            pendingFolderIdForOverlay = null
+        }
+    }
+
+    LaunchedEffect(Unit) {
+        captureViewModel.loadActiveSession()
+    }
+
+    LaunchedEffect(activeSession) {
+        if (activeSession != null && activeSession!!.isActive) {
+            selectedCaptureFolderId = activeSession!!.folderId
+        }
+    }
+
+    val isCaptureActive = activeSession != null && activeSession!!.isActive
+    val activeFolderName = remember(activeSession, foldersWithCount) {
+        if (activeSession != null) {
+            foldersWithCount.find { it.folder.id == activeSession!!.folderId }?.folder?.name ?: "Folder"
+        } else ""
+    }
+
     Scaffold(
-        modifier = Modifier.fillMaxSize()
+        modifier = Modifier.fillMaxSize(),
+        containerColor = Color.Black
     ) { innerPadding ->
 
         Column(
@@ -263,38 +302,27 @@ fun HomeScreen(
                 Text(
                     text = "4S",
                     style = MaterialTheme.typography.headlineMedium,
-                    fontWeight = FontWeight.Bold
+                    fontWeight = FontWeight.Bold,
+                    color = Color.White
                 )
             }
 
-            Spacer(
-                modifier = Modifier.height(24.dp)
-            )
+            Spacer(modifier = Modifier.height(24.dp))
 
             Text(
                 text = "My Folders",
                 style = MaterialTheme.typography.titleLarge,
-                fontWeight = FontWeight.SemiBold
+                fontWeight = FontWeight.SemiBold,
+                color = Color.White
             )
 
-            Spacer(
-                modifier = Modifier.height(16.dp)
-            )
+            Spacer(modifier = Modifier.height(16.dp))
 
-            LazyVerticalGrid(
-                columns = GridCells.Fixed(2),
-
+            // Vertical Stack of Folders
+            LazyColumn(
                 modifier = Modifier.weight(1f),
-
-                contentPadding = PaddingValues(
-                    bottom = 16.dp
-                ),
-
-                horizontalArrangement =
-                    Arrangement.spacedBy(12.dp),
-
-                verticalArrangement =
-                    Arrangement.spacedBy(12.dp)
+                contentPadding = PaddingValues(bottom = 16.dp),
+                verticalArrangement = Arrangement.spacedBy(10.dp)
             ) {
 
                 items(
@@ -302,60 +330,217 @@ fun HomeScreen(
                     key = { item -> item.folder.id }
                 ) { item ->
 
-                    FolderCard(
-                        folderWithCount = item,
+                    val isCaptureSelected = (item.folder.id == selectedCaptureFolderId)
 
-                        onClick = {
-                            onFolderClick(
-                                item.folder.id,
-                                item.folder.name
-                            )
-                        },
+                    Card(
+                        modifier = Modifier.fillMaxWidth(),
+                        shape = RoundedCornerShape(12.dp),
+                        colors = CardDefaults.cardColors(
+                            containerColor = if (isCaptureSelected) Color(0xFF222222) else Color(0xFF121212)
+                        ),
+                        border = if (isCaptureSelected) BorderStroke(1.dp, Color.White.copy(alpha = 0.8f)) else BorderStroke(0.5.dp, Color.White.copy(alpha = 0.1f))
+                    ) {
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(16.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.SpaceBetween
+                        ) {
+                            // MAIN OPEN FOLDER AREA (~85% width)
+                            Row(
+                                modifier = Modifier
+                                    .weight(1f)
+                                    .combinedClickable(
+                                        onClick = {
+                                            onFolderClick(item.folder.id, item.folder.name)
+                                        },
+                                        onLongClick = {
+                                            folderToDelete = item
+                                        }
+                                    ),
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Icon(
+                                    imageVector = Icons.Default.Folder,
+                                    contentDescription = "Open folder",
+                                    tint = Color.White,
+                                    modifier = Modifier.size(24.dp)
+                                )
 
-                        onLongClick = {
-                            folderToDelete = item
+                                Spacer(modifier = Modifier.width(16.dp))
+
+                                Column {
+                                    Text(
+                                        text = item.folder.name,
+                                        style = MaterialTheme.typography.titleMedium,
+                                        fontWeight = FontWeight.Bold,
+                                        color = Color.White
+                                    )
+                                    Spacer(modifier = Modifier.height(2.dp))
+                                    Text(
+                                        text = "${item.screenshotCount} screenshot${if (item.screenshotCount == 1) "" else "s"}",
+                                        style = MaterialTheme.typography.bodySmall,
+                                        color = Color.White.copy(alpha = 0.6f)
+                                    )
+                                }
+                            }
+
+                            // RIGHT-SIDE CAPTURE SELECTION CONTROL (~15% width)
+                            Box(
+                                modifier = Modifier
+                                    .padding(start = 12.dp)
+                                    .size(36.dp)
+                                    .clickable {
+                                        if (isCaptureActive) {
+                                            selectedCaptureFolderId = item.folder.id
+                                            captureViewModel.startCapture(item.folder.id)
+                                        } else {
+                                            if (selectedCaptureFolderId == item.folder.id) {
+                                                selectedCaptureFolderId = null
+                                            } else {
+                                                selectedCaptureFolderId = item.folder.id
+                                            }
+                                        }
+                                    },
+                                contentAlignment = Alignment.Center
+                            ) {
+                                if (isCaptureSelected) {
+                                    Icon(
+                                        imageVector = Icons.Default.Check,
+                                        contentDescription = "Selected as capture destination",
+                                        tint = Color.White,
+                                        modifier = Modifier.size(22.dp)
+                                    )
+                                } else {
+                                    Box(
+                                        modifier = Modifier
+                                            .size(18.dp)
+                                            .border(
+                                                width = 1.5.dp,
+                                                color = Color.White.copy(alpha = 0.4f),
+                                                shape = CircleShape
+                                            )
+                                    )
+                                }
+                            }
                         }
-                    )
+                    }
                 }
 
                 item {
-
-                    AddFolderCard(
-                        onClick = {
-                            showAddFolderDialog = true
+                    // Add Folder Card
+                    Card(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .clickable {
+                                showAddFolderDialog = true
+                            },
+                        shape = RoundedCornerShape(12.dp),
+                        colors = CardDefaults.cardColors(containerColor = Color(0xFF121212)),
+                        border = BorderStroke(1.dp, Color.White.copy(alpha = 0.2f))
+                    ) {
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(16.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.Center
+                        ) {
+                            Icon(
+                                imageVector = Icons.Default.Add,
+                                contentDescription = "Add folder",
+                                tint = Color.White
+                            )
+                            Spacer(modifier = Modifier.width(8.dp))
+                            Text(
+                                text = "Add Folder",
+                                style = MaterialTheme.typography.titleMedium,
+                                fontWeight = FontWeight.SemiBold,
+                                color = Color.White
+                            )
                         }
+                    }
+                }
+            }
+
+            // Capturing Status Indicator
+            if (isCaptureActive) {
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(bottom = 8.dp),
+                    horizontalArrangement = Arrangement.Center,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Text(
+                        text = "● Capturing to $activeFolderName",
+                        style = MaterialTheme.typography.bodySmall,
+                        fontWeight = FontWeight.Medium,
+                        color = Color.White.copy(alpha = 0.9f)
                     )
                 }
             }
 
-            Button(
-                onClick = onStartCapture,
+            // Primary Bottom Action Button State Machine
+            val isEnabled = isCaptureActive || selectedCaptureFolderId != null
+            val buttonText = when {
+                isCaptureActive -> "Stop Capture"
+                selectedCaptureFolderId != null -> "Start Capture"
+                else -> "Select a Folder"
+            }
 
+            Button(
+                onClick = {
+                    if (!isEnabled) return@Button
+
+                    if (isCaptureActive) {
+                        captureViewModel.stopCapture()
+                        OverlayBubbleService.hideBubble(context)
+                    } else if (selectedCaptureFolderId != null) {
+                        val targetFolderId = selectedCaptureFolderId!!
+                        if (Settings.canDrawOverlays(context)) {
+                            captureViewModel.startCapture(targetFolderId)
+                            OverlayBubbleService.showBubble(context)
+                        } else {
+                            pendingFolderIdForOverlay = targetFolderId
+                            val intent = Intent(
+                                Settings.ACTION_MANAGE_OVERLAY_PERMISSION,
+                                Uri.parse("package:${context.packageName}")
+                            )
+                            overlayPermissionLauncher.launch(intent)
+                        }
+                    }
+                },
+                enabled = isEnabled,
+                colors = ButtonDefaults.buttonColors(
+                    containerColor = if (isEnabled) Color.White else Color.White.copy(alpha = 0.2f),
+                    contentColor = if (isEnabled) Color.Black else Color.White.copy(alpha = 0.4f),
+                    disabledContainerColor = Color.White.copy(alpha = 0.2f),
+                    disabledContentColor = Color.White.copy(alpha = 0.4f)
+                ),
+                shape = RoundedCornerShape(12.dp),
                 modifier = Modifier
                     .fillMaxWidth()
                     .padding(bottom = 20.dp)
                     .height(52.dp)
             ) {
-
                 Text(
-                    text = "Start Capture"
+                    text = buttonText,
+                    fontWeight = FontWeight.Bold,
+                    fontSize = 16.sp
                 )
             }
         }
     }
 
     if (showAddFolderDialog) {
-
         AddFolderDialog(
-
             onDismiss = {
                 showAddFolderDialog = false
             },
-
             onCreate = { folderName ->
-
                 onAddFolder(folderName)
-
                 showAddFolderDialog = false
             }
         )
@@ -367,8 +552,10 @@ fun HomeScreen(
             onDismissRequest = { folderToDelete = null },
             title = { Text("Delete folder?") },
             text = {
-                Text("This folder contains ${target.screenshotCount} screenshot${if (target.screenshotCount == 1) "" else "s"}. " +
-                        "Deleting this folder will remove all its saved screenshots from SSS.")
+                Text(
+                    "This folder contains ${target.screenshotCount} screenshot${if (target.screenshotCount == 1) "" else "s"}. " +
+                            "Deleting this folder will remove all its saved screenshots from SSS."
+                )
             },
             confirmButton = {
                 Button(
