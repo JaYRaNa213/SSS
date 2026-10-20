@@ -17,8 +17,13 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.combinedClickable
+import androidx.compose.foundation.gestures.detectTapGestures
+import androidx.compose.foundation.gestures.detectTransformGestures
+import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
@@ -27,6 +32,7 @@ import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
@@ -49,6 +55,7 @@ import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Folder
 import androidx.compose.material.icons.filled.PictureAsPdf
 import androidx.compose.material.icons.filled.RotateRight
+import androidx.compose.material.icons.filled.TextFields
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
@@ -56,6 +63,7 @@ import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
+import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
@@ -81,6 +89,9 @@ import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.TextStyle
 import com.sss.app.ui.pdf.PdfExportDialog
+import com.sss.app.ui.ocr.ExtractedTextScreen
+import com.sss.app.ui.ocr.OcrStatus
+import com.sss.app.ui.ocr.OcrViewModel
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -109,6 +120,7 @@ class MainActivity : ComponentActivity() {
         setContent {
             SSSTheme {
                 SssApp()
+
             }
         }
     }
@@ -176,7 +188,29 @@ fun SssApp() {
                     navController.navigate("viewer/$folderId/$index")
                 },
 
+                onOpenDocument = { documentId ->
+                    navController.navigate("extracted-text/$documentId")
+                },
+
                 onStartCaptureForFolder = {
+                    navController.popBackStack()
+                }
+            )
+        }
+
+        // ---------------------------------------------------------
+        // EXTRACTED TEXT / STUDY NOTES
+        // ---------------------------------------------------------
+
+        composable("extracted-text/{documentId}") { backStackEntry ->
+            val documentId = backStackEntry.arguments
+                ?.getString("documentId")
+                ?.toLongOrNull()
+                ?: return@composable
+
+            ExtractedTextScreen(
+                documentId = documentId,
+                onBackClick = {
                     navController.popBackStack()
                 }
             )
@@ -957,14 +991,18 @@ fun FolderScreen(
     folderName: String,
     onBackClick: () -> Unit,
     onScreenshotClick: (Int) -> Unit,
+    onOpenDocument: (Long) -> Unit,
     onStartCaptureForFolder: () -> Unit,
-    viewModel: FolderViewModel = hiltViewModel()
+    viewModel: FolderViewModel = hiltViewModel(),
+    ocrViewModel: OcrViewModel = hiltViewModel()
 ) {
 
     val screenshotsFlow = remember(folderId) {
         viewModel.screenshots(folderId)
     }
     val screenshots by screenshotsFlow.collectAsState()
+    val savedDocuments by viewModel.getDocumentsByFolder(folderId).collectAsState(initial = emptyList())
+    val ocrUiState by ocrViewModel.ocrUiState.collectAsState()
 
     val selectedScreenshotIds = remember { mutableStateListOf<Long>() }
 
@@ -973,6 +1011,15 @@ fun FolderScreen(
     var screenshotsForPdf by remember { mutableStateOf<List<ScreenshotEntity>>(emptyList()) }
 
     val isSelectionMode = selectedScreenshotIds.isNotEmpty()
+
+    LaunchedEffect(ocrUiState.createdDocumentId) {
+        val docId = ocrUiState.createdDocumentId
+        if (docId != null) {
+            selectedScreenshotIds.clear()
+            ocrViewModel.resetOcrState()
+            onOpenDocument(docId)
+        }
+    }
 
     Scaffold { innerPadding ->
 
@@ -1009,6 +1056,25 @@ fun FolderScreen(
                     }
 
                     Row(verticalAlignment = Alignment.CenterVertically) {
+                        IconButton(
+                            onClick = {
+                                val selectedList = selectedScreenshotIds.mapNotNull { id -> screenshots.find { it.id == id } }
+                                val selectedUris = selectedList.map {
+                                    if (it.filePath.startsWith("content://") || it.filePath.startsWith("file://")) {
+                                        Uri.parse(it.filePath)
+                                    } else {
+                                        Uri.fromFile(java.io.File(it.filePath))
+                                    }
+                                }
+                                ocrViewModel.extractTextFromImages(folderId, folderName, selectedUris)
+                            }
+                        ) {
+                            Icon(
+                                imageVector = Icons.Default.TextFields,
+                                contentDescription = "Extract Text OCR"
+                            )
+                        }
+
                         IconButton(
                             onClick = {
                                 val selectedList = screenshots.filter { selectedScreenshotIds.contains(it.id) }
@@ -1072,7 +1138,7 @@ fun FolderScreen(
                     .weight(1f)
             ) {
 
-                if (screenshots.isEmpty()) {
+                if (screenshots.isEmpty() && savedDocuments.isEmpty()) {
 
                     Column(
                         modifier = Modifier
@@ -1124,96 +1190,155 @@ fun FolderScreen(
                         modifier = Modifier.fillMaxSize()
                     ) {
 
-                        Text(
-                            text = "${screenshots.size} screenshot${if (screenshots.size == 1) "" else "s"}",
-                            style = MaterialTheme.typography.titleMedium,
-                            modifier = Modifier.padding(horizontal = 20.dp, vertical = 4.dp)
-                        )
+                        if (screenshots.isNotEmpty()) {
+                            Text(
+                                text = "${screenshots.size} screenshot${if (screenshots.size == 1) "" else "s"}",
+                                style = MaterialTheme.typography.titleMedium,
+                                modifier = Modifier.padding(horizontal = 20.dp, vertical = 4.dp)
+                            )
 
-                        LazyVerticalGrid(
-                            columns = GridCells.Fixed(3),
-                            modifier = Modifier
-                                .fillMaxSize()
-                                .padding(horizontal = 16.dp),
-                            contentPadding = PaddingValues(bottom = 16.dp),
-                            horizontalArrangement = Arrangement.spacedBy(8.dp),
-                            verticalArrangement = Arrangement.spacedBy(8.dp)
-                        ) {
+                            LazyVerticalGrid(
+                                columns = GridCells.Fixed(3),
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .weight(1f)
+                                    .padding(horizontal = 16.dp),
+                                contentPadding = PaddingValues(bottom = 16.dp),
+                                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                                verticalArrangement = Arrangement.spacedBy(8.dp)
+                            ) {
 
-                            itemsIndexed(
-                                items = screenshots,
-                                key = { _, screenshot -> screenshot.id }
-                            ) { index, screenshot ->
+                                itemsIndexed(
+                                    items = screenshots,
+                                    key = { _, screenshot -> screenshot.id }
+                                ) { index, screenshot ->
 
-                                val isSelected = selectedScreenshotIds.contains(screenshot.id)
-                                val selectedOrder = if (isSelected) selectedScreenshotIds.indexOf(screenshot.id) + 1 else 0
+                                    val isSelected = selectedScreenshotIds.contains(screenshot.id)
+                                    val selectedOrder = if (isSelected) selectedScreenshotIds.indexOf(screenshot.id) + 1 else 0
 
-                                Card(
-                                    modifier = Modifier
-                                        .fillMaxWidth()
-                                        .aspectRatio(1f)
-                                        .combinedClickable(
-                                            onClick = {
-                                                if (isSelectionMode) {
-                                                    if (isSelected) {
-                                                        selectedScreenshotIds.remove(screenshot.id)
+                                    Card(
+                                        modifier = Modifier
+                                            .fillMaxWidth()
+                                            .aspectRatio(1f)
+                                            .combinedClickable(
+                                                onClick = {
+                                                    if (isSelectionMode) {
+                                                        if (isSelected) {
+                                                            selectedScreenshotIds.remove(screenshot.id)
+                                                        } else {
+                                                            selectedScreenshotIds.add(screenshot.id)
+                                                        }
                                                     } else {
+                                                        onScreenshotClick(index)
+                                                    }
+                                                },
+                                                onLongClick = {
+                                                    if (!isSelected) {
                                                         selectedScreenshotIds.add(screenshot.id)
                                                     }
-                                                } else {
-                                                    onScreenshotClick(index)
                                                 }
-                                            },
-                                            onLongClick = {
-                                                if (!isSelected) {
-                                                    selectedScreenshotIds.add(screenshot.id)
-                                                }
-                                            }
-                                        ),
-                                    elevation = CardDefaults.cardElevation(
-                                        defaultElevation = if (isSelected) 6.dp else 2.dp
-                                    )
-                                ) {
-                                    Box(modifier = Modifier.fillMaxSize()) {
-                                        val imageModel = remember(screenshot.filePath) {
-                                            if (screenshot.filePath.startsWith("content://") || screenshot.filePath.startsWith("file://")) {
-                                                Uri.parse(screenshot.filePath)
-                                            } else {
-                                                screenshot.filePath
-                                            }
-                                        }
-
-                                        AsyncImage(
-                                            model = imageModel,
-                                            contentDescription = "Screenshot #${screenshot.sequenceNumber}",
-                                            contentScale = ContentScale.Crop,
-                                            modifier = Modifier.fillMaxSize()
+                                            ),
+                                        elevation = CardDefaults.cardElevation(
+                                            defaultElevation = if (isSelected) 6.dp else 2.dp
                                         )
+                                    ) {
+                                        Box(modifier = Modifier.fillMaxSize()) {
+                                            val imageModel = remember(screenshot.filePath) {
+                                                if (screenshot.filePath.startsWith("content://") || screenshot.filePath.startsWith("file://")) {
+                                                    Uri.parse(screenshot.filePath)
+                                                } else {
+                                                    screenshot.filePath
+                                                }
+                                            }
 
-                                        if (isSelected) {
-                                            Box(
-                                                modifier = Modifier
-                                                    .fillMaxSize()
-                                                    .background(Color.Black.copy(alpha = 0.4f))
+                                            AsyncImage(
+                                                model = imageModel,
+                                                contentDescription = "Screenshot #${screenshot.sequenceNumber}",
+                                                contentScale = ContentScale.Crop,
+                                                modifier = Modifier.fillMaxSize()
                                             )
 
-                                            Surface(
-                                                shape = RoundedCornerShape(12.dp),
-                                                color = MaterialTheme.colorScheme.primary,
-                                                modifier = Modifier
-                                                    .align(Alignment.TopEnd)
-                                                    .padding(6.dp)
-                                                    .size(24.dp)
-                                            ) {
-                                                Box(contentAlignment = Alignment.Center) {
-                                                    Text(
-                                                        text = "$selectedOrder",
-                                                        color = MaterialTheme.colorScheme.onPrimary,
-                                                        fontSize = 12.sp,
-                                                        fontWeight = FontWeight.Bold
-                                                    )
+                                            if (isSelected) {
+                                                Box(
+                                                    modifier = Modifier
+                                                        .fillMaxSize()
+                                                        .background(Color.Black.copy(alpha = 0.4f))
+                                                )
+
+                                                Surface(
+                                                    shape = RoundedCornerShape(12.dp),
+                                                    color = MaterialTheme.colorScheme.primary,
+                                                    modifier = Modifier
+                                                        .align(Alignment.TopEnd)
+                                                        .padding(6.dp)
+                                                        .size(24.dp)
+                                                ) {
+                                                    Box(contentAlignment = Alignment.Center) {
+                                                        Text(
+                                                            text = "$selectedOrder",
+                                                            color = MaterialTheme.colorScheme.onPrimary,
+                                                            fontSize = 12.sp,
+                                                            fontWeight = FontWeight.Bold
+                                                        )
+                                                    }
                                                 }
                                             }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+
+                        // Saved Study Notes Section
+                        if (savedDocuments.isNotEmpty()) {
+                            Spacer(modifier = Modifier.height(12.dp))
+                            Text(
+                                text = "Saved Notes (${savedDocuments.size})",
+                                style = MaterialTheme.typography.titleMedium,
+                                fontWeight = FontWeight.Bold,
+                                modifier = Modifier.padding(horizontal = 20.dp, vertical = 4.dp)
+                            )
+
+                            LazyColumn(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .heightIn(max = 180.dp)
+                                    .padding(horizontal = 16.dp),
+                                verticalArrangement = Arrangement.spacedBy(6.dp)
+                            ) {
+                                items(savedDocuments, key = { it.id }) { doc ->
+                                    Card(
+                                        modifier = Modifier
+                                            .fillMaxWidth()
+                                            .clickable { onOpenDocument(doc.id) },
+                                        colors = CardDefaults.cardColors(containerColor = Color(0xFF1C1C1E)),
+                                        shape = RoundedCornerShape(8.dp)
+                                    ) {
+                                        Row(
+                                            modifier = Modifier
+                                                .fillMaxWidth()
+                                                .padding(12.dp),
+                                            horizontalArrangement = Arrangement.SpaceBetween,
+                                            verticalAlignment = Alignment.CenterVertically
+                                        ) {
+                                            Column(modifier = Modifier.weight(1f)) {
+                                                Text(
+                                                    text = doc.title,
+                                                    style = MaterialTheme.typography.titleSmall,
+                                                    fontWeight = FontWeight.Bold,
+                                                    color = Color.White
+                                                )
+                                                Text(
+                                                    text = "${doc.sourceImageCount} screenshots processed",
+                                                    style = MaterialTheme.typography.bodySmall,
+                                                    color = Color.Gray
+                                                )
+                                            }
+                                            Text(
+                                                text = "Open >",
+                                                style = MaterialTheme.typography.labelMedium,
+                                                color = MaterialTheme.colorScheme.primary
+                                            )
                                         }
                                     }
                                 }
@@ -1223,6 +1348,27 @@ fun FolderScreen(
                 }
             }
         }
+    }
+
+    if (ocrUiState.status == OcrStatus.PROCESSING) {
+        AlertDialog(
+            onDismissRequest = { },
+            title = { Text("Extracting Text...") },
+            text = {
+                Column {
+                    Text(
+                        text = "Processing ${ocrUiState.completedImages} of ${ocrUiState.totalImages} screenshots",
+                        style = MaterialTheme.typography.bodyMedium
+                    )
+                    Spacer(modifier = Modifier.height(12.dp))
+                    LinearProgressIndicator(
+                        progress = { ocrUiState.progress },
+                        modifier = Modifier.fillMaxWidth()
+                    )
+                }
+            },
+            confirmButton = {}
+        )
     }
 
     if (showDeleteConfirmDialog) {
@@ -1323,6 +1469,8 @@ fun ImageViewerScreen(
         }
     )
 
+    var isCurrentPageZoomed by remember { mutableStateOf(false) }
+
     LaunchedEffect(screenshots.size) {
         if (screenshots.isNotEmpty() && pagerState.currentPage > screenshots.lastIndex) {
             pagerState.scrollToPage(screenshots.lastIndex)
@@ -1343,6 +1491,7 @@ fun ImageViewerScreen(
 
             HorizontalPager(
                 state = pagerState,
+                userScrollEnabled = !isCurrentPageZoomed,
                 modifier = Modifier.fillMaxSize()
             ) { page ->
 
@@ -1363,29 +1512,112 @@ fun ImageViewerScreen(
 
                     val rotation = rotationMap[page] ?: 0f
 
-                    Box(
+                    var scale by remember(page) { mutableFloatStateOf(1f) }
+                    var offsetX by remember(page) { mutableFloatStateOf(0f) }
+                    var offsetY by remember(page) { mutableFloatStateOf(0f) }
+
+                    val isCurrent = pagerState.currentPage == page
+
+                    LaunchedEffect(scale, isCurrent) {
+                        if (isCurrent) {
+                            isCurrentPageZoomed = scale > 1.05f
+                        }
+                    }
+
+                    LaunchedEffect(pagerState.currentPage) {
+                        if (pagerState.currentPage != page) {
+                            scale = 1f
+                            offsetX = 0f
+                            offsetY = 0f
+                        }
+                    }
+
+                    BoxWithConstraints(
                         modifier = Modifier.fillMaxSize(),
                         contentAlignment = Alignment.Center
                     ) {
-                        AsyncImage(
-                            model = imageModel,
-                            contentDescription =
-                                "Screenshot #${screenshot.sequenceNumber}",
-                            contentScale = ContentScale.Fit,
+                        val containerWidth = constraints.maxWidth.toFloat()
+                        val containerHeight = constraints.maxHeight.toFloat()
+
+                        // Calculate aspect-ratio scale for 90° / 270° rotations to fit 100% inside screen without clipping
+                        val fitRotationScale = if (
+                            rotation % 180f != 0f &&
+                            containerWidth > 0f &&
+                            containerHeight > 0f
+                        ) {
+                            minOf(containerWidth / containerHeight, containerHeight / containerWidth)
+                        } else {
+                            1f
+                        }
+
+                        val totalScale = scale * fitRotationScale
+
+                        Box(
                             modifier = Modifier
                                 .fillMaxSize()
-                                .graphicsLayer(rotationZ = rotation),
-                            onSuccess = {
-                                Log.d("SSS_VIEWER", "IMAGE SUCCESS URI=${screenshot.filePath}")
-                            },
-                            onError = { errorState ->
-                                Log.e(
-                                    "SSS_VIEWER",
-                                    "IMAGE ERROR URI=${screenshot.filePath}",
-                                    errorState.result.throwable
-                                )
-                            }
-                        )
+                                .pointerInput(page, scale) {
+                                    detectTapGestures(
+                                        onDoubleTap = {
+                                            if (scale > 1f) {
+                                                scale = 1f
+                                                offsetX = 0f
+                                                offsetY = 0f
+                                            } else {
+                                                scale = 2.5f
+                                            }
+                                        }
+                                    )
+                                }
+                                .pointerInput(page, scale) {
+                                    if (scale > 1f) {
+                                        detectTransformGestures { _, pan, zoom, _ ->
+                                            val newScale = (scale * zoom).coerceIn(1f, 5f)
+                                            if (newScale > 1f) {
+                                                scale = newScale
+                                                offsetX += pan.x
+                                                offsetY += pan.y
+                                            } else {
+                                                scale = 1f
+                                                offsetX = 0f
+                                                offsetY = 0f
+                                            }
+                                        }
+                                    } else {
+                                        detectTransformGestures { _, _, zoom, _ ->
+                                            if (zoom > 1f) {
+                                                scale = (scale * zoom).coerceIn(1f, 5f)
+                                            }
+                                        }
+                                    }
+                                },
+                            contentAlignment = Alignment.Center
+                        ) {
+                            AsyncImage(
+                                model = imageModel,
+                                contentDescription =
+                                    "Screenshot #${screenshot.sequenceNumber}",
+                                contentScale = ContentScale.Fit,
+                                modifier = Modifier
+                                    .fillMaxSize()
+                                    .graphicsLayer(
+                                        scaleX = totalScale,
+                                        scaleY = totalScale,
+                                        translationX = offsetX,
+                                        translationY = offsetY,
+                                        rotationZ = rotation
+                                    ),
+                                onSuccess = {
+                                    Log.d("SSS_VIEWER", "IMAGE SUCCESS URI=${screenshot.filePath}")
+                                },
+                                onError = { errorState ->
+                                    Log.e(
+                                        "SSS_VIEWER",
+                                        "IMAGE ERROR URI=${screenshot.filePath}",
+                                        errorState.result.throwable
+                                    )
+                                }
+                            )
+                        }
                     }
                 }
             }
