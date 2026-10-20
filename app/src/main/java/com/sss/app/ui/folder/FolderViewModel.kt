@@ -3,8 +3,11 @@ package com.sss.app.ui.folder
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.sss.app.data.local.ScreenshotEntity
+import com.sss.app.data.local.StudyDocumentEntity
 import com.sss.app.data.repository.ScreenshotRepository
+import com.sss.app.data.repository.StudyDocumentRepository
 import dagger.hilt.android.lifecycle.HiltViewModel
+import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.stateIn
@@ -13,7 +16,8 @@ import javax.inject.Inject
 
 @HiltViewModel
 class FolderViewModel @Inject constructor(
-    private val repository: ScreenshotRepository
+    private val repository: ScreenshotRepository,
+    private val studyDocumentRepository: StudyDocumentRepository
 ) : ViewModel() {
 
     fun screenshots(folderId: Long): StateFlow<List<ScreenshotEntity>> {
@@ -24,6 +28,10 @@ class FolderViewModel @Inject constructor(
                 started = SharingStarted.WhileSubscribed(5_000),
                 initialValue = emptyList()
             )
+    }
+
+    fun getDocumentsByFolder(folderId: Long): Flow<List<StudyDocumentEntity>> {
+        return studyDocumentRepository.getDocumentsByFolder(folderId)
     }
 
     fun deleteScreenshot(screenshot: ScreenshotEntity) {
