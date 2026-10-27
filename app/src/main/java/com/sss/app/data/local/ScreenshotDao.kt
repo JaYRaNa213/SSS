@@ -21,6 +21,21 @@ interface ScreenshotDao {
         folderId: Long
     ): Flow<List<ScreenshotEntity>>
 
+    @Query("SELECT * FROM screenshots WHERE folderId = :folderId")
+    suspend fun getScreenshotsByFolderList(folderId: Long): List<ScreenshotEntity>
+
+    @Query("SELECT * FROM screenshots ORDER BY capturedAt DESC")
+    suspend fun getAllScreenshotsList(): List<ScreenshotEntity>
+
+    @Query("SELECT * FROM screenshots ORDER BY capturedAt DESC")
+    fun getAllScreenshotsFlow(): Flow<List<ScreenshotEntity>>
+
+    @Query("SELECT COUNT(*) FROM screenshots WHERE filePath = :filePath")
+    suspend fun countByFilePath(filePath: String): Int
+
+    @Query("SELECT COALESCE(MAX(sequenceNumber), 0) FROM screenshots WHERE folderId = :folderId")
+    suspend fun getMaxSequence(folderId: Long): Int
+
     @Insert
     suspend fun insertScreenshot(
         screenshot: ScreenshotEntity

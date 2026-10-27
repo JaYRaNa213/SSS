@@ -1,10 +1,8 @@
 package com.sss.app.ui.capture
 
 import android.app.Application
-import android.net.Uri
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
-import com.sss.app.capture.ScreenshotObserver
 import com.sss.app.data.local.CaptureSessionEntity
 import com.sss.app.data.repository.ScreenshotRepository
 import com.sss.app.data.repository.SessionRepository
@@ -21,6 +19,15 @@ import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
 import javax.inject.Inject
 
+/**
+ * The ScreenshotObserver no longer lives here.
+ * A ViewModel is destroyed when the Activity goes away, which silently stopped
+ * screenshot detection while the bubble still said "Active".
+ * Detection now runs inside OverlayBubbleService (foreground service).
+ *
+ * This ViewModel only edits the session row in the database. Both the UI and the
+ * service react to that row.
+ */
 @HiltViewModel
 class CaptureViewModel @Inject constructor(
     application: Application,
@@ -28,18 +35,24 @@ class CaptureViewModel @Inject constructor(
     private val screenshotRepository: ScreenshotRepository
 ) : AndroidViewModel(application) {
 
-    private val _activeSession =
-        MutableStateFlow<CaptureSessionEntity?>(null)
+    private val _activeSession = MutableStateFlow<CaptureSessionEntity?>(null)
+    val activeSession: StateFlow<CaptureSessionEntity?> = _activeSession.asStateFlow()
 
-    val activeSession: StateFlow<CaptureSessionEntity?> =
-        _activeSession.asStateFlow()
+    init {
+        // Follow the database, so a folder switched from the floating panel
+        // (or a capture stopped from the notification) shows up in the app immediately.
+        viewModelScope.launch {
+            repository.observeActiveSession().collect { session ->
+                _activeSession.value = session?.takeIf { it.isActive }
+            }
+        }
+    }
 
     @OptIn(ExperimentalCoroutinesApi::class)
     val activeSessionScreenshotCount: StateFlow<Int> = _activeSession
         .flatMapLatest { session ->
             if (session != null) {
-                screenshotRepository.getScreenshotsByFolder(session.folderId)
-                    .map { it.size }
+                screenshotRepository.getScreenshotsByFolder(session.folderId).map { it.size }
             } else {
                 flowOf(0)
             }
@@ -50,83 +63,30 @@ class CaptureViewModel @Inject constructor(
             initialValue = 0
         )
 
-    private val screenshotObserver =
-        ScreenshotObserver(
-            context = application,
-            onScreenshotDetected = { uri ->
-                onScreenshotDetected(uri)
-            }
-        )
-
+    /** Kept so existing calls still compile. The flow in init() already keeps state fresh. */
     fun loadActiveSession() {
         viewModelScope.launch {
-            val session = repository.getActiveSession()
-            _activeSession.value = session
-            if (session != null && session.isActive) {
-                screenshotObserver.start()
-            }
+            _activeSession.value = repository.getActiveSession()?.takeIf { it.isActive }
         }
     }
 
     fun startCapture(folderId: Long) {
         viewModelScope.launch {
             val current = repository.getActiveSession()
-            if (current != null && current.folderId == folderId && current.isActive) {
-                _activeSession.value = current
-                return@launch
+            when {
+                // already capturing into this folder
+                current != null && current.isActive && current.folderId == folderId -> Unit
+                // capturing into another folder -> just switch, don't stop/start anything
+                current != null && current.isActive -> repository.switchActiveFolder(folderId)
+                else -> repository.startSession(folderId)
             }
-
-            if (current != null && current.isActive) {
-                screenshotObserver.stop()
-                repository.stopSession()
-            }
-
-            repository.startSession(folderId)
-            _activeSession.value = repository.getActiveSession()
-            screenshotObserver.start()
         }
     }
 
     fun stopCapture() {
         viewModelScope.launch {
-
-            screenshotObserver.stop()
-
             repository.stopSession()
-
             _activeSession.value = null
         }
-    }
-
-    private fun onScreenshotDetected(uri: Uri) {
-        viewModelScope.launch {
-            val session = repository.getActiveSession()
-
-            if (session == null) {
-                println("SSS No active session. Screenshot not saved.")
-                return@launch
-            }
-
-            val screenshotCount =
-                screenshotRepository.getScreenshotCount(session.folderId)
-
-            val sequenceNumber = screenshotCount + 1
-
-            screenshotRepository.addScreenshot(
-                folderId = session.folderId,
-                filePath = uri.toString(),
-                sequenceNumber = sequenceNumber
-            )
-
-            println(
-                "SSS Screenshot saved: folderId=${session.folderId}, " +
-                        "sequence=$sequenceNumber, uri=$uri"
-            )
-        }
-    }
-
-    override fun onCleared() {
-        screenshotObserver.stop()
-        super.onCleared()
     }
 }

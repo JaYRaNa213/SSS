@@ -1,12 +1,17 @@
 package com.sss.app.capture
 
+import android.app.NotificationChannel
+import android.app.NotificationManager
+import android.app.PendingIntent
 import android.app.Service
 import android.content.Context
 import android.content.Intent
+import android.content.pm.ServiceInfo
 import android.graphics.Canvas
 import android.graphics.Paint
 import android.graphics.PixelFormat
 import android.graphics.Typeface
+import android.net.Uri
 import android.os.Build
 import android.os.Handler
 import android.os.IBinder
@@ -60,6 +65,8 @@ import androidx.compose.ui.platform.ComposeView
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.core.app.NotificationCompat
+import androidx.core.content.ContextCompat
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleOwner
 import androidx.lifecycle.LifecycleRegistry
@@ -68,18 +75,25 @@ import androidx.savedstate.SavedStateRegistry
 import androidx.savedstate.SavedStateRegistryController
 import androidx.savedstate.SavedStateRegistryOwner
 import androidx.savedstate.setViewTreeSavedStateRegistryOwner
-import com.sss.app.data.DatabaseProvider
+import com.sss.app.MainActivity
 import com.sss.app.data.repository.FolderRepository
+import com.sss.app.data.repository.ScreenshotRepository
 import com.sss.app.data.repository.SessionRepository
 import com.sss.app.ui.theme.SSSTheme
+import dagger.hilt.android.AndroidEntryPoint
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
+import javax.inject.Inject
 import kotlin.math.abs
 import android.graphics.Color as AndroidColor
 
+@AndroidEntryPoint
 class OverlayBubbleService : Service(), LifecycleOwner, SavedStateRegistryOwner {
 
     private val lifecycleRegistry = LifecycleRegistry(this)
@@ -109,8 +123,14 @@ class OverlayBubbleService : Service(), LifecycleOwner, SavedStateRegistryOwner 
     private var panelView: View? = null
     private var isPanelOpen = false
 
-    private lateinit var folderRepository: FolderRepository
-    private lateinit var sessionRepository: SessionRepository
+    @Inject lateinit var folderRepository: FolderRepository
+    @Inject lateinit var sessionRepository: SessionRepository
+    @Inject lateinit var screenshotRepository: ScreenshotRepository
+
+    private val screenshotObserver by lazy {
+        ScreenshotObserver(applicationContext) { uri -> onScreenshotDetected(uri) }
+    }
+    private var sessionJob: Job? = null
 
     // Inactivity / Foggy state
     private val idleRunnable = Runnable {
@@ -124,6 +144,9 @@ class OverlayBubbleService : Service(), LifecycleOwner, SavedStateRegistryOwner 
         const val TAG = "SSS_OVERLAY"
         const val ACTION_SHOW = "com.sss.app.action.SHOW_BUBBLE"
         const val ACTION_HIDE = "com.sss.app.action.HIDE_BUBBLE"
+        const val ACTION_STOP_CAPTURE = "com.sss.app.action.STOP_CAPTURE"
+        private const val CHANNEL_ID = "sss_capture"
+        private const val NOTIF_ID = 1001
 
         fun showBubble(context: Context) {
             if (!Settings.canDrawOverlays(context)) {
@@ -133,7 +156,7 @@ class OverlayBubbleService : Service(), LifecycleOwner, SavedStateRegistryOwner 
             val intent = Intent(context, OverlayBubbleService::class.java).apply {
                 action = ACTION_SHOW
             }
-            context.startService(intent)
+            ContextCompat.startForegroundService(context, intent)
         }
 
         fun hideBubble(context: Context) {
@@ -155,19 +178,90 @@ class OverlayBubbleService : Service(), LifecycleOwner, SavedStateRegistryOwner 
         lifecycleRegistry.handleLifecycleEvent(Lifecycle.Event.ON_RESUME)
 
         windowManager = getSystemService(WINDOW_SERVICE) as WindowManager
-
-        val db = DatabaseProvider.getDatabase(this)
-        folderRepository = FolderRepository(db.folderDao())
-        sessionRepository = SessionRepository(db.sessionDao())
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
-        val action = intent?.action
-        when (action) {
-            ACTION_SHOW -> showOverlay()
+        when (intent?.action) {
             ACTION_HIDE -> stopServiceAndHideOverlay()
+
+            ACTION_STOP_CAPTURE -> serviceScope.launch {
+                sessionRepository.stopSession()
+                stopServiceAndHideOverlay()
+            }
+
+            else -> {
+                goForeground()
+                showOverlay()
+                startWatchingSession()
+            }
         }
-        return START_NOT_STICKY
+        return START_STICKY
+    }
+
+    private fun goForeground() {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+            getSystemService(NotificationManager::class.java).createNotificationChannel(
+                NotificationChannel(CHANNEL_ID, "Screenshot capture", NotificationManager.IMPORTANCE_LOW)
+            )
+        }
+
+        val flags = PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT
+        val openApp = PendingIntent.getActivity(
+            this, 0, Intent(this, MainActivity::class.java), flags
+        )
+        val stop = PendingIntent.getService(
+            this, 1,
+            Intent(this, OverlayBubbleService::class.java).setAction(ACTION_STOP_CAPTURE),
+            flags
+        )
+
+        val notification = NotificationCompat.Builder(this, CHANNEL_ID)
+            .setSmallIcon(android.R.drawable.ic_menu_camera)
+            .setContentTitle("SSS is capturing screenshots")
+            .setContentText("Tap to open. New screenshots go to your selected folder.")
+            .setContentIntent(openApp)
+            .addAction(0, "Stop", stop)
+            .setOngoing(true)
+            .build()
+
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE) {
+            startForeground(NOTIF_ID, notification, ServiceInfo.FOREGROUND_SERVICE_TYPE_SPECIAL_USE)
+        } else {
+            startForeground(NOTIF_ID, notification)
+        }
+    }
+
+    private fun startWatchingSession() {
+        if (sessionJob?.isActive == true) return
+        sessionJob = serviceScope.launch {
+            sessionRepository.observeActiveSession().collect { session ->
+                if (session != null && session.isActive) {
+                    screenshotObserver.start()
+                } else {
+                    screenshotObserver.stop()
+                    delay(2_000)
+                    val again = sessionRepository.getActiveSession()
+                    if (again == null || !again.isActive) stopServiceAndHideOverlay()
+                }
+            }
+        }
+    }
+
+    private fun onScreenshotDetected(uri: Uri) {
+        serviceScope.launch(Dispatchers.IO) {
+            try {
+                val session = sessionRepository.getActiveSession()
+                if (session == null || !session.isActive) return@launch
+                screenshotRepository.addScreenshotIfAbsent(
+                    folderId = session.folderId,
+                    filePath = uri.toString()
+                )
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                Log.e(TAG, "Failed to save screenshot $uri", e)
+            }
+        }
     }
 
     private fun showOverlay() {
@@ -481,13 +575,16 @@ class OverlayBubbleService : Service(), LifecycleOwner, SavedStateRegistryOwner 
     }
 
     private fun stopServiceAndHideOverlay() {
+        screenshotObserver.stop()
         hideBubbleOnly()
+        stopForeground(STOP_FOREGROUND_REMOVE)
         stopSelf()
     }
 
     override fun onDestroy() {
         super.onDestroy()
         lifecycleRegistry.handleLifecycleEvent(Lifecycle.Event.ON_DESTROY)
+        screenshotObserver.stop()
         serviceScope.cancel()
         mainHandler.removeCallbacksAndMessages(null)
         removeRedCloseControl()
@@ -578,7 +675,8 @@ fun FloatingFolderPanel(
     scope: CoroutineScope
 ) {
     val folders by folderRepository.folders.collectAsState(initial = emptyList())
-    val activeSession by sessionRepository.observeActiveSession().collectAsState(initial = null)
+    val activeSessionFlow = remember(sessionRepository) { sessionRepository.observeActiveSession() }
+    val activeSession by activeSessionFlow.collectAsState(initial = null)
     val activeFolderId = activeSession?.folderId
 
     var showNewFolderInput by remember { mutableStateOf(false) }

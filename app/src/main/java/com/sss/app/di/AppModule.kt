@@ -9,6 +9,7 @@ import com.sss.app.data.local.FolderDao
 import com.sss.app.data.local.ScreenshotDao
 import com.sss.app.data.local.SessionDao
 import com.sss.app.data.local.StudyDocumentDao
+import com.sss.app.data.repository.AllScreenshotsRepository
 import com.sss.app.data.repository.FolderRepository
 import com.sss.app.data.repository.ScreenshotRepository
 import com.sss.app.data.repository.SessionRepository
@@ -159,5 +160,14 @@ object AppModule {
         studyDocumentDao: StudyDocumentDao
     ): StudyDocumentRepository {
         return StudyDocumentRepository(studyDocumentDao)
+    }
+
+    @Provides
+    @Singleton
+    fun provideAllScreenshotsRepository(
+        @ApplicationContext context: Context,
+        screenshotRepository: ScreenshotRepository
+    ): AllScreenshotsRepository {
+        return AllScreenshotsRepository(context, screenshotRepository)
     }
 }
