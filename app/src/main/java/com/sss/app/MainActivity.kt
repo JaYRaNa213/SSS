@@ -1,5 +1,6 @@
 package com.sss.app
 
+import android.app.Activity
 import android.content.Intent
 import android.content.pm.PackageManager
 import android.net.Uri
@@ -8,9 +9,14 @@ import android.os.Bundle
 import android.provider.Settings
 import android.util.Log
 import androidx.activity.ComponentActivity
+import androidx.activity.compose.BackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.compose.setContent
+import androidx.activity.result.IntentSenderRequest
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.runtime.DisposableEffect
+import androidx.compose.ui.platform.LocalLifecycleOwner
+import com.sss.app.util.MediaDelete
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
@@ -51,6 +57,7 @@ import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.ArrowBack
 import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.Close
+import androidx.compose.material.icons.filled.Collections
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Folder
 import androidx.compose.material.icons.filled.PictureAsPdf
@@ -106,6 +113,7 @@ import com.sss.app.data.local.FolderEntity
 import com.sss.app.data.local.FolderWithCount
 import com.sss.app.data.local.ScreenshotEntity
 import com.sss.app.ui.capture.CaptureViewModel
+import com.sss.app.ui.folder.AllScreenshotsViewModel
 import com.sss.app.ui.folder.FolderViewModel
 import com.sss.app.ui.home.HomeViewModel
 import com.sss.app.ui.theme.SSSTheme
@@ -152,7 +160,7 @@ fun SssApp() {
                 },
 
                 onFolderClick = { folderId, folderName ->
-                    navController.navigate("folder/$folderId/$folderName")
+                    navController.navigate("folder/$folderId/${Uri.encode(folderName)}")
                 },
 
                 onFolderDelete = { folder ->
@@ -171,14 +179,21 @@ fun SssApp() {
                 ?.toLongOrNull()
                 ?: return@composable
 
-            val folderName =
+            val rawFolderName =
                 backStackEntry.arguments
                     ?.getString("folderName")
                     ?: "Folder"
+            val folderName = Uri.decode(rawFolderName)
+
+            val homeEntry = remember(backStackEntry) {
+                navController.getBackStackEntry("home")
+            }
+            val allVm: AllScreenshotsViewModel = hiltViewModel(homeEntry)
 
             FolderScreen(
                 folderId = folderId,
                 folderName = folderName,
+                allScreenshotsViewModel = allVm,
 
                 onBackClick = {
                     navController.popBackStack()
@@ -231,9 +246,15 @@ fun SssApp() {
                 ?.toIntOrNull()
                 ?: 0
 
+            val homeEntry = remember(backStackEntry) {
+                navController.getBackStackEntry("home")
+            }
+            val allVm: AllScreenshotsViewModel = hiltViewModel(homeEntry)
+
             ImageViewerScreen(
                 folderId = folderId,
                 initialIndex = initialIndex,
+                allScreenshotsViewModel = allVm,
                 onBackClick = {
                     navController.popBackStack()
                 }
@@ -263,10 +284,37 @@ fun HomeScreen(
     onAddFolder: (String) -> Unit,
     onFolderClick: (Long, String) -> Unit,
     onFolderDelete: (FolderEntity) -> Unit,
-    captureViewModel: CaptureViewModel = hiltViewModel()
+    captureViewModel: CaptureViewModel = hiltViewModel(),
+    allScreenshotsViewModel: AllScreenshotsViewModel = hiltViewModel()
 ) {
     val context = LocalContext.current
     val activeSession by captureViewModel.activeSession.collectAsState()
+    val allScreenshots by allScreenshotsViewModel.allScreenshots.collectAsState()
+
+    val requiredStoragePermission = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+        android.Manifest.permission.READ_MEDIA_IMAGES
+    } else {
+        android.Manifest.permission.READ_EXTERNAL_STORAGE
+    }
+
+    var hasStoragePermission by remember {
+        mutableStateOf(
+            ContextCompat.checkSelfPermission(
+                context,
+                requiredStoragePermission
+            ) == PackageManager.PERMISSION_GRANTED
+        )
+    }
+
+    val storagePermissionLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.RequestPermission()
+    ) { isGranted ->
+        hasStoragePermission = isGranted
+        if (isGranted) {
+            captureViewModel.loadActiveSession()
+            allScreenshotsViewModel.loadAllScreenshots()
+        }
+    }
 
     var selectedCaptureFolderId by remember {
         mutableStateOf<Long?>(null)
@@ -298,13 +346,51 @@ fun HomeScreen(
         }
     }
 
+    val lifecycleOwner = LocalLifecycleOwner.current
+    DisposableEffect(lifecycleOwner) {
+        val observer = androidx.lifecycle.LifecycleEventObserver { _, event ->
+            if (event == androidx.lifecycle.Lifecycle.Event.ON_RESUME) {
+                hasStoragePermission = ContextCompat.checkSelfPermission(
+                    context, requiredStoragePermission
+                ) == PackageManager.PERMISSION_GRANTED
+                if (hasStoragePermission) allScreenshotsViewModel.loadAllScreenshots()
+                captureViewModel.loadActiveSession()
+            }
+        }
+        lifecycleOwner.lifecycle.addObserver(observer)
+        onDispose { lifecycleOwner.lifecycle.removeObserver(observer) }
+    }
+
     LaunchedEffect(Unit) {
+        if (!hasStoragePermission) {
+            storagePermissionLauncher.launch(requiredStoragePermission)
+        } else {
+            allScreenshotsViewModel.loadAllScreenshots()
+        }
         captureViewModel.loadActiveSession()
+    }
+
+    val notificationPermissionLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.RequestPermission()
+    ) { }
+
+    LaunchedEffect(hasStoragePermission) {
+        if (hasStoragePermission &&
+            Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU &&
+            ContextCompat.checkSelfPermission(
+                context, android.Manifest.permission.POST_NOTIFICATIONS
+            ) != PackageManager.PERMISSION_GRANTED
+        ) {
+            notificationPermissionLauncher.launch(android.Manifest.permission.POST_NOTIFICATIONS)
+        }
     }
 
     LaunchedEffect(activeSession) {
         if (activeSession != null && activeSession!!.isActive) {
             selectedCaptureFolderId = activeSession!!.folderId
+            if (Settings.canDrawOverlays(context)) {
+                OverlayBubbleService.showBubble(context)
+            }
         }
     }
 
@@ -358,6 +444,53 @@ fun HomeScreen(
                 contentPadding = PaddingValues(bottom = 16.dp),
                 verticalArrangement = Arrangement.spacedBy(10.dp)
             ) {
+
+                // Permanent Virtual Folder: Other
+                item {
+                    Card(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .clickable {
+                                onFolderClick(-1L, "Other")
+                            },
+                        shape = RoundedCornerShape(12.dp),
+                        colors = CardDefaults.cardColors(
+                            containerColor = Color(0xFF1C1C22)
+                        ),
+                        border = BorderStroke(1.dp, Color.White.copy(alpha = 0.35f))
+                    ) {
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(16.dp),
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Icon(
+                                imageVector = Icons.Default.Collections,
+                                contentDescription = "Other screenshots",
+                                tint = Color.White,
+                                modifier = Modifier.size(24.dp)
+                            )
+
+                            Spacer(modifier = Modifier.width(16.dp))
+
+                            Column {
+                                Text(
+                                    text = "Other",
+                                    style = MaterialTheme.typography.titleMedium,
+                                    fontWeight = FontWeight.Bold,
+                                    color = Color.White
+                                )
+                                Spacer(modifier = Modifier.height(2.dp))
+                                Text(
+                                    text = "${allScreenshots.size} screenshot${if (allScreenshots.size == 1) "" else "s"}",
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = Color.White.copy(alpha = 0.6f)
+                                )
+                            }
+                        }
+                    }
+                }
 
                 items(
                     items = foldersWithCount,
@@ -527,6 +660,11 @@ fun HomeScreen(
             Button(
                 onClick = {
                     if (!isEnabled) return@Button
+
+                    if (!hasStoragePermission) {
+                        storagePermissionLauncher.launch(requiredStoragePermission)
+                        return@Button
+                    }
 
                     if (isCaptureActive) {
                         captureViewModel.stopCapture()
@@ -994,13 +1132,22 @@ fun FolderScreen(
     onOpenDocument: (Long) -> Unit,
     onStartCaptureForFolder: () -> Unit,
     viewModel: FolderViewModel = hiltViewModel(),
+    allScreenshotsViewModel: AllScreenshotsViewModel = hiltViewModel(),
     ocrViewModel: OcrViewModel = hiltViewModel()
 ) {
 
-    val screenshotsFlow = remember(folderId) {
+    val isAllScreenshotsVirtualFolder = (folderId == -1L)
+
+    val context = LocalContext.current
+
+    val allScreenshotsList by allScreenshotsViewModel.allScreenshots.collectAsState()
+    val roomScreenshotsFlow = remember(folderId) {
         viewModel.screenshots(folderId)
     }
-    val screenshots by screenshotsFlow.collectAsState()
+    val roomScreenshots by roomScreenshotsFlow.collectAsState()
+
+    val screenshots = if (isAllScreenshotsVirtualFolder) allScreenshotsList else roomScreenshots
+
     val savedDocuments by viewModel.getDocumentsByFolder(folderId).collectAsState(initial = emptyList())
     val ocrUiState by ocrViewModel.ocrUiState.collectAsState()
 
@@ -1011,6 +1158,26 @@ fun FolderScreen(
     var screenshotsForPdf by remember { mutableStateOf<List<ScreenshotEntity>>(emptyList()) }
 
     val isSelectionMode = selectedScreenshotIds.isNotEmpty()
+
+    // back button leaves selection mode first
+    BackHandler(enabled = isSelectionMode) {
+        selectedScreenshotIds.clear()
+    }
+
+    val deleteLauncher = rememberLauncherForActivityResult(
+        ActivityResultContracts.StartIntentSenderForResult()
+    ) { result ->
+        if (result.resultCode == Activity.RESULT_OK) {
+            selectedScreenshotIds.clear()
+            allScreenshotsViewModel.loadAllScreenshots()
+        }
+    }
+
+    LaunchedEffect(folderId) {
+        if (isAllScreenshotsVirtualFolder) {
+            allScreenshotsViewModel.loadAllScreenshots()
+        }
+    }
 
     LaunchedEffect(ocrUiState.createdDocumentId) {
         val docId = ocrUiState.createdDocumentId
@@ -1077,7 +1244,7 @@ fun FolderScreen(
 
                         IconButton(
                             onClick = {
-                                val selectedList = screenshots.filter { selectedScreenshotIds.contains(it.id) }
+                                val selectedList = selectedScreenshotIds.mapNotNull { id -> screenshots.find { it.id == id } }
                                 screenshotsForPdf = selectedList
                                 showPdfDialog = true
                             }
@@ -1384,8 +1551,18 @@ fun FolderScreen(
                     ),
                     onClick = {
                         val targets = screenshots.filter { selectedScreenshotIds.contains(it.id) }
-                        viewModel.deleteScreenshots(targets)
-                        selectedScreenshotIds.clear()
+                        if (isAllScreenshotsVirtualFolder) {
+                            val sender = MediaDelete.delete(context, targets.map { Uri.parse(it.filePath) })
+                            if (sender != null) {
+                                deleteLauncher.launch(IntentSenderRequest.Builder(sender).build())
+                            } else {
+                                selectedScreenshotIds.clear()
+                                allScreenshotsViewModel.loadAllScreenshots()
+                            }
+                        } else {
+                            viewModel.deleteScreenshots(targets)
+                            selectedScreenshotIds.clear()
+                        }
                         showDeleteConfirmDialog = false
                     }
                 ) {
@@ -1407,315 +1584,6 @@ fun FolderScreen(
             folderName = folderName,
             screenshots = screenshotsForPdf,
             onDismiss = { showPdfDialog = false }
-        )
-    }
-}
-
-
-// ================================================================
-// IMAGE VIEWER SCREEN
-// ================================================================
-
-@OptIn(ExperimentalFoundationApi::class)
-@Composable
-fun ImageViewerScreen(
-    folderId: Long,
-    initialIndex: Int,
-    onBackClick: () -> Unit,
-    viewModel: FolderViewModel = hiltViewModel()
-) {
-
-    val screenshotsFlow = remember(folderId) {
-        viewModel.screenshots(folderId)
-    }
-
-    val screenshots by screenshotsFlow.collectAsState()
-
-    var screenshotToDelete by remember {
-        mutableStateOf<ScreenshotEntity?>(null)
-    }
-
-    val rotationMap = remember { mutableStateMapOf<Int, Float>() }
-
-    if (screenshots.isEmpty()) {
-        Box(
-            modifier = Modifier
-                .fillMaxSize()
-                .background(Color.Black)
-        ) {
-            IconButton(
-                onClick = onBackClick,
-                modifier = Modifier
-                    .align(Alignment.TopStart)
-                    .padding(16.dp)
-            ) {
-                Icon(
-                    imageVector = Icons.Default.ArrowBack,
-                    contentDescription = "Back",
-                    tint = Color.White
-                )
-            }
-        }
-        return
-    }
-
-    val validInitialIndex =
-        initialIndex.coerceIn(0, screenshots.lastIndex)
-
-    val pagerState = rememberPagerState(
-        initialPage = validInitialIndex,
-        pageCount = {
-            screenshots.size
-        }
-    )
-
-    var isCurrentPageZoomed by remember { mutableStateOf(false) }
-
-    LaunchedEffect(screenshots.size) {
-        if (screenshots.isNotEmpty() && pagerState.currentPage > screenshots.lastIndex) {
-            pagerState.scrollToPage(screenshots.lastIndex)
-        }
-    }
-
-    Scaffold(
-        modifier = Modifier.fillMaxSize(),
-        containerColor = Color.Black
-    ) { innerPadding ->
-
-        Box(
-            modifier = Modifier
-                .fillMaxSize()
-                .padding(innerPadding)
-                .background(Color.Black)
-        ) {
-
-            HorizontalPager(
-                state = pagerState,
-                userScrollEnabled = !isCurrentPageZoomed,
-                modifier = Modifier.fillMaxSize()
-            ) { page ->
-
-                val screenshot = screenshots.getOrNull(page)
-
-                if (screenshot != null) {
-
-                    val imageModel = remember(screenshot.filePath) {
-                        if (
-                            screenshot.filePath.startsWith("content://") ||
-                            screenshot.filePath.startsWith("file://")
-                        ) {
-                            Uri.parse(screenshot.filePath)
-                        } else {
-                            screenshot.filePath
-                        }
-                    }
-
-                    val rotation = rotationMap[page] ?: 0f
-
-                    var scale by remember(page) { mutableFloatStateOf(1f) }
-                    var offsetX by remember(page) { mutableFloatStateOf(0f) }
-                    var offsetY by remember(page) { mutableFloatStateOf(0f) }
-
-                    val isCurrent = pagerState.currentPage == page
-
-                    LaunchedEffect(scale, isCurrent) {
-                        if (isCurrent) {
-                            isCurrentPageZoomed = scale > 1.05f
-                        }
-                    }
-
-                    LaunchedEffect(pagerState.currentPage) {
-                        if (pagerState.currentPage != page) {
-                            scale = 1f
-                            offsetX = 0f
-                            offsetY = 0f
-                        }
-                    }
-
-                    BoxWithConstraints(
-                        modifier = Modifier.fillMaxSize(),
-                        contentAlignment = Alignment.Center
-                    ) {
-                        val containerWidth = constraints.maxWidth.toFloat()
-                        val containerHeight = constraints.maxHeight.toFloat()
-
-                        // Calculate aspect-ratio scale for 90° / 270° rotations to fit 100% inside screen without clipping
-                        val fitRotationScale = if (
-                            rotation % 180f != 0f &&
-                            containerWidth > 0f &&
-                            containerHeight > 0f
-                        ) {
-                            minOf(containerWidth / containerHeight, containerHeight / containerWidth)
-                        } else {
-                            1f
-                        }
-
-                        val totalScale = scale * fitRotationScale
-
-                        Box(
-                            modifier = Modifier
-                                .fillMaxSize()
-                                .pointerInput(page, scale) {
-                                    detectTapGestures(
-                                        onDoubleTap = {
-                                            if (scale > 1f) {
-                                                scale = 1f
-                                                offsetX = 0f
-                                                offsetY = 0f
-                                            } else {
-                                                scale = 2.5f
-                                            }
-                                        }
-                                    )
-                                }
-                                .pointerInput(page, scale) {
-                                    if (scale > 1f) {
-                                        detectTransformGestures { _, pan, zoom, _ ->
-                                            val newScale = (scale * zoom).coerceIn(1f, 5f)
-                                            if (newScale > 1f) {
-                                                scale = newScale
-                                                offsetX += pan.x
-                                                offsetY += pan.y
-                                            } else {
-                                                scale = 1f
-                                                offsetX = 0f
-                                                offsetY = 0f
-                                            }
-                                        }
-                                    } else {
-                                        detectTransformGestures { _, _, zoom, _ ->
-                                            if (zoom > 1f) {
-                                                scale = (scale * zoom).coerceIn(1f, 5f)
-                                            }
-                                        }
-                                    }
-                                },
-                            contentAlignment = Alignment.Center
-                        ) {
-                            AsyncImage(
-                                model = imageModel,
-                                contentDescription =
-                                    "Screenshot #${screenshot.sequenceNumber}",
-                                contentScale = ContentScale.Fit,
-                                modifier = Modifier
-                                    .fillMaxSize()
-                                    .graphicsLayer(
-                                        scaleX = totalScale,
-                                        scaleY = totalScale,
-                                        translationX = offsetX,
-                                        translationY = offsetY,
-                                        rotationZ = rotation
-                                    ),
-                                onSuccess = {
-                                    Log.d("SSS_VIEWER", "IMAGE SUCCESS URI=${screenshot.filePath}")
-                                },
-                                onError = { errorState ->
-                                    Log.e(
-                                        "SSS_VIEWER",
-                                        "IMAGE ERROR URI=${screenshot.filePath}",
-                                        errorState.result.throwable
-                                    )
-                                }
-                            )
-                        }
-                    }
-                }
-            }
-
-            // Top Bar Overlay
-            Row(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .background(Color(0x88000000))
-                    .padding(horizontal = 12.dp, vertical = 8.dp)
-                    .align(Alignment.TopCenter),
-                horizontalArrangement = Arrangement.SpaceBetween,
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-
-                IconButton(
-                    onClick = onBackClick
-                ) {
-                    Icon(
-                        imageVector = Icons.Default.ArrowBack,
-                        contentDescription = "Back",
-                        tint = Color.White
-                    )
-                }
-
-                if (screenshots.isNotEmpty()) {
-                    Text(
-                        text = "${pagerState.currentPage + 1} / ${screenshots.size}",
-                        color = Color.White,
-                        style = MaterialTheme.typography.titleMedium,
-                        fontWeight = FontWeight.Bold
-                    )
-                }
-
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    IconButton(
-                        onClick = {
-                            val current = rotationMap[pagerState.currentPage] ?: 0f
-                            rotationMap[pagerState.currentPage] = (current + 90f) % 360f
-                        }
-                    ) {
-                        Icon(
-                            imageVector = Icons.Default.RotateRight,
-                            contentDescription = "Rotate image",
-                            tint = Color.White
-                        )
-                    }
-
-                    IconButton(
-                        onClick = {
-                            val currentScreenshot =
-                                screenshots.getOrNull(pagerState.currentPage)
-
-                            if (currentScreenshot != null) {
-                                screenshotToDelete = currentScreenshot
-                            }
-                        }
-                    ) {
-                        Icon(
-                            imageVector = Icons.Default.Delete,
-                            contentDescription = "Delete screenshot",
-                            tint = Color.White
-                        )
-                    }
-                }
-            }
-        }
-    }
-
-    if (screenshotToDelete != null) {
-        val target = screenshotToDelete!!
-        AlertDialog(
-            onDismissRequest = { screenshotToDelete = null },
-            title = { Text("Delete this screenshot?") },
-            text = { Text("This screenshot will be removed from this folder.") },
-            confirmButton = {
-                Button(
-                    colors = ButtonDefaults.buttonColors(
-                        containerColor = MaterialTheme.colorScheme.error
-                    ),
-                    onClick = {
-                        viewModel.deleteScreenshot(target)
-                        screenshotToDelete = null
-                        if (screenshots.size <= 1) {
-                            onBackClick()
-                        }
-                    }
-                ) {
-                    Text("Delete")
-                }
-            },
-            dismissButton = {
-                TextButton(
-                    onClick = { screenshotToDelete = null }
-                ) {
-                    Text("Cancel")
-                }
-            }
         )
     }
 }
