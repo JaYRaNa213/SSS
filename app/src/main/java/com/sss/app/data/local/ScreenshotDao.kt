@@ -64,4 +64,10 @@ interface ScreenshotDao {
     suspend fun getScreenshotCount(
         folderId: Long
     ): Int
+
+    @Insert(onConflict = androidx.room.OnConflictStrategy.REPLACE)
+    suspend fun insertAll(list: List<ScreenshotEntity>)
+
+    @Query("UPDATE screenshots SET folderId = :folderId, sequenceNumber = :seq WHERE id = :id")
+    suspend fun moveOne(id: Long, folderId: Long, seq: Int)
 }

@@ -8,18 +8,16 @@ import androidx.room.RoomDatabase
         FolderEntity::class,
         ScreenshotEntity::class,
         CaptureSessionEntity::class,
-        StudyDocumentEntity::class
+        StudyDocumentEntity::class,
+        ScreenshotMetaEntity::class
     ],
-    version = 4,
+    version = 5,
     exportSchema = false
 )
 abstract class AppDatabase : RoomDatabase() {
-
     abstract fun folderDao(): FolderDao
-
     abstract fun screenshotDao(): ScreenshotDao
-
     abstract fun sessionDao(): SessionDao
-
     abstract fun studyDocumentDao(): StudyDocumentDao
+    abstract fun screenshotMetaDao(): ScreenshotMetaDao
 }

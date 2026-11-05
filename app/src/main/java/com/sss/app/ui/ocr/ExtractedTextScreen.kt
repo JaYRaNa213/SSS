@@ -45,7 +45,6 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontWeight
@@ -94,7 +93,7 @@ fun ExtractedTextScreen(
 
     Scaffold(
         modifier = Modifier.fillMaxSize(),
-        containerColor = Color.Black
+        containerColor = MaterialTheme.colorScheme.background
     ) { innerPadding ->
 
         if (document == null) {
@@ -102,12 +101,12 @@ fun ExtractedTextScreen(
                 modifier = Modifier
                     .fillMaxSize()
                     .padding(innerPadding)
-                    .background(Color.Black),
+                    .background(MaterialTheme.colorScheme.background),
                 contentAlignment = Alignment.Center
             ) {
                 Text(
                     text = "Loading document...",
-                    color = Color.White
+                    color = MaterialTheme.colorScheme.onBackground
                 )
             }
         } else {
@@ -132,7 +131,7 @@ fun ExtractedTextScreen(
                             Icon(
                                 imageVector = Icons.Default.ArrowBack,
                                 contentDescription = "Back",
-                                tint = Color.White
+                                tint = MaterialTheme.colorScheme.onBackground
                             )
                         }
                         Spacer(modifier = Modifier.width(8.dp))
@@ -141,12 +140,12 @@ fun ExtractedTextScreen(
                                 text = "Study Notes",
                                 style = MaterialTheme.typography.titleMedium,
                                 fontWeight = FontWeight.Bold,
-                                color = Color.White
+                                color = MaterialTheme.colorScheme.onBackground
                             )
                             Text(
                                 text = saveStatus,
                                 style = MaterialTheme.typography.labelSmall,
-                                color = Color.Gray
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
                             )
                         }
                     }
@@ -180,7 +179,7 @@ fun ExtractedTextScreen(
                             Icon(
                                 imageVector = Icons.Default.PictureAsPdf,
                                 contentDescription = "Export PDF",
-                                tint = Color.White
+                                tint = MaterialTheme.colorScheme.onBackground
                             )
                         }
 
@@ -200,10 +199,10 @@ fun ExtractedTextScreen(
                 OutlinedTextField(
                     value = doc.title,
                     onValueChange = { viewModel.updateDocumentTitle(it) },
-                    label = { Text("Document Title", color = Color.Gray) },
+                    label = { Text("Document Title", color = MaterialTheme.colorScheme.onSurfaceVariant) },
                     singleLine = true,
                     textStyle = TextStyle(
-                        color = Color.White,
+                        color = MaterialTheme.colorScheme.onBackground,
                         fontSize = 18.sp,
                         fontWeight = FontWeight.Bold
                     ),
@@ -216,7 +215,7 @@ fun ExtractedTextScreen(
                 Text(
                     text = "📄 ${doc.sourceImageCount} screenshot${if (doc.sourceImageCount == 1) "" else "s"} processed",
                     style = MaterialTheme.typography.bodySmall,
-                    color = Color.Gray,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
                     modifier = Modifier.padding(bottom = 8.dp)
                 )
 
@@ -224,9 +223,9 @@ fun ExtractedTextScreen(
                 OutlinedTextField(
                     value = doc.content,
                     onValueChange = { viewModel.updateDocumentContent(it) },
-                    label = { Text("Extracted Notes (Editable)", color = Color.Gray) },
+                    label = { Text("Extracted Notes (Editable)", color = MaterialTheme.colorScheme.onSurfaceVariant) },
                     textStyle = TextStyle(
-                        color = Color.White,
+                        color = MaterialTheme.colorScheme.onBackground,
                         fontSize = 15.sp,
                         lineHeight = 22.sp
                     ),
@@ -248,8 +247,8 @@ fun ExtractedTextScreen(
                         safPdfLauncher.launch(intent)
                     },
                     colors = ButtonDefaults.buttonColors(
-                        containerColor = Color.White,
-                        contentColor = Color.Black
+                        containerColor = MaterialTheme.colorScheme.primary,
+                        contentColor = MaterialTheme.colorScheme.onPrimary
                     ),
                     shape = RoundedCornerShape(12.dp),
                     modifier = Modifier

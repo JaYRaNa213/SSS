@@ -1,5 +1,9 @@
 package com.sss.app.capture
 
+import android.animation.Animator
+import android.animation.AnimatorListenerAdapter
+import android.animation.ValueAnimator
+import android.app.Notification
 import android.app.NotificationChannel
 import android.app.NotificationManager
 import android.app.PendingIntent
@@ -7,10 +11,9 @@ import android.app.Service
 import android.content.Context
 import android.content.Intent
 import android.content.pm.ServiceInfo
-import android.graphics.Canvas
-import android.graphics.Paint
 import android.graphics.PixelFormat
 import android.graphics.Typeface
+import android.graphics.drawable.GradientDrawable
 import android.net.Uri
 import android.os.Build
 import android.os.Handler
@@ -19,52 +22,12 @@ import android.os.Looper
 import android.provider.Settings
 import android.util.Log
 import android.view.Gravity
+import android.view.HapticFeedbackConstants
 import android.view.MotionEvent
 import android.view.View
 import android.view.WindowManager
-import androidx.compose.foundation.background
-import androidx.compose.foundation.clickable
-import androidx.compose.foundation.layout.Arrangement
-import androidx.compose.foundation.layout.Column
-import androidx.compose.foundation.layout.Row
-import androidx.compose.foundation.layout.Spacer
-import androidx.compose.foundation.layout.fillMaxWidth
-import androidx.compose.foundation.layout.height
-import androidx.compose.foundation.layout.heightIn
-import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.layout.size
-import androidx.compose.foundation.layout.width
-import androidx.compose.foundation.layout.wrapContentHeight
-import androidx.compose.foundation.lazy.LazyColumn
-import androidx.compose.foundation.lazy.items
-import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.Add
-import androidx.compose.material.icons.filled.Check
-import androidx.compose.material.icons.filled.Close
-import androidx.compose.material.icons.filled.Folder
-import androidx.compose.material3.Button
-import androidx.compose.material3.HorizontalDivider
-import androidx.compose.material3.Icon
-import androidx.compose.material3.IconButton
-import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.OutlinedTextField
-import androidx.compose.material3.Surface
-import androidx.compose.material3.Text
-import androidx.compose.material3.TextButton
-import androidx.compose.runtime.Composable
-import androidx.compose.runtime.collectAsState
-import androidx.compose.runtime.getValue
-import androidx.compose.runtime.mutableStateOf
-import androidx.compose.runtime.remember
-import androidx.compose.runtime.setValue
-import androidx.compose.ui.Alignment
-import androidx.compose.ui.Modifier
-import androidx.compose.ui.graphics.Color
+import android.widget.TextView
 import androidx.compose.ui.platform.ComposeView
-import androidx.compose.ui.text.font.FontWeight
-import androidx.compose.ui.unit.dp
-import androidx.compose.ui.unit.sp
 import androidx.core.app.NotificationCompat
 import androidx.core.content.ContextCompat
 import androidx.lifecycle.Lifecycle
@@ -76,94 +39,94 @@ import androidx.savedstate.SavedStateRegistryController
 import androidx.savedstate.SavedStateRegistryOwner
 import androidx.savedstate.setViewTreeSavedStateRegistryOwner
 import com.sss.app.MainActivity
+import com.sss.app.R
 import com.sss.app.data.repository.FolderRepository
+import com.sss.app.data.repository.ScreenshotMetaRepository
 import com.sss.app.data.repository.ScreenshotRepository
 import com.sss.app.data.repository.SessionRepository
+import com.sss.app.data.repository.UndoDeleteManager
+import com.sss.app.data.settings.AppSettings
+import com.sss.app.data.settings.SettingsKeys
+import com.sss.app.data.settings.SettingsRepository
 import com.sss.app.ui.theme.SSSTheme
 import dagger.hilt.android.AndroidEntryPoint
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.flow.distinctUntilChanged
+import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.flow.flatMapLatest
+import kotlinx.coroutines.flow.flowOf
+import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.launch
 import javax.inject.Inject
 import kotlin.math.abs
-import android.graphics.Color as AndroidColor
+import kotlin.math.max
+import kotlin.math.min
 
 @AndroidEntryPoint
 class OverlayBubbleService : Service(), LifecycleOwner, SavedStateRegistryOwner {
 
     private val lifecycleRegistry = LifecycleRegistry(this)
     private val savedStateRegistryController = SavedStateRegistryController.create(this)
-
-    override val lifecycle: Lifecycle
-        get() = lifecycleRegistry
-
-    override val savedStateRegistry: SavedStateRegistry
-        get() = savedStateRegistryController.savedStateRegistry
+    override val lifecycle: Lifecycle get() = lifecycleRegistry
+    override val savedStateRegistry: SavedStateRegistry get() = savedStateRegistryController.savedStateRegistry
 
     private val serviceScope = CoroutineScope(SupervisorJob() + Dispatchers.Main)
     private val mainHandler = Handler(Looper.getMainLooper())
-
     private var windowManager: WindowManager? = null
 
-    // 4S Bubble
-    private var bubbleView: View? = null
+    private var bubbleView: AssistiveBubbleView? = null
     private var bubbleParams: WindowManager.LayoutParams? = null
-
-    // Red Close Control
-    private var redDotView: View? = null
-    private var redDotParams: WindowManager.LayoutParams? = null
-    private var isRedDotShowing = false
-
-    // Folder Panel
+    private var closeView: CloseDotView? = null
     private var panelView: View? = null
-    private var isPanelOpen = false
+    private var panelParams: WindowManager.LayoutParams? = null
+    private var labelView: TextView? = null
+    private var longPressRunnable: Runnable? = null
 
     @Inject lateinit var folderRepository: FolderRepository
     @Inject lateinit var sessionRepository: SessionRepository
     @Inject lateinit var screenshotRepository: ScreenshotRepository
+    @Inject lateinit var settingsRepository: SettingsRepository
+    @Inject lateinit var metaRepository: ScreenshotMetaRepository
+    @Inject lateinit var undoManager: UndoDeleteManager
 
-    private val screenshotObserver by lazy {
-        ScreenshotObserver(applicationContext) { uri -> onScreenshotDetected(uri) }
-    }
+    private var settings = AppSettings()
+    private val screenshotObserver by lazy { ScreenshotObserver(applicationContext) { uri -> onScreenshotDetected(uri) } }
     private var sessionJob: Job? = null
+    private var settingsJob: Job? = null
+    private var badgeJob: Job? = null
+    private var lastFolderId: Long? = null
+    private var lastBadge: Pair<Long?, Int>? = null
 
-    // Inactivity / Foggy state
     private val idleRunnable = Runnable {
-        bubbleView?.animate()?.alpha(0.55f)?.setDuration(400)?.start()
+        bubbleView?.animate()?.alpha(settings.bubbleOpacity.coerceIn(0.2f, 1f))?.setDuration(400)?.start()
     }
-
-    // Long press
-    private var longPressRunnable: Runnable? = null
+    private val removeLabelRunnable = Runnable { removeLabel() }
 
     companion object {
         const val TAG = "SSS_OVERLAY"
         const val ACTION_SHOW = "com.sss.app.action.SHOW_BUBBLE"
         const val ACTION_HIDE = "com.sss.app.action.HIDE_BUBBLE"
         const val ACTION_STOP_CAPTURE = "com.sss.app.action.STOP_CAPTURE"
+        const val ACTION_TOGGLE_PAUSE = "com.sss.app.action.TOGGLE_PAUSE"
         private const val CHANNEL_ID = "sss_capture"
         private const val NOTIF_ID = 1001
 
+        /** Starts the service (screenshot detection + bubble). Works even without the overlay permission (no bubble then). */
         fun showBubble(context: Context) {
-            if (!Settings.canDrawOverlays(context)) {
-                Log.w(TAG, "Overlay permission missing")
-                return
-            }
-            val intent = Intent(context, OverlayBubbleService::class.java).apply {
-                action = ACTION_SHOW
-            }
+            val intent = Intent(context, OverlayBubbleService::class.java).apply { action = ACTION_SHOW }
             ContextCompat.startForegroundService(context, intent)
         }
 
         fun hideBubble(context: Context) {
-            val intent = Intent(context, OverlayBubbleService::class.java).apply {
-                action = ACTION_HIDE
-            }
-            context.startService(intent)
+            context.startService(Intent(context, OverlayBubbleService::class.java).apply { action = ACTION_HIDE })
         }
     }
 
@@ -171,409 +134,446 @@ class OverlayBubbleService : Service(), LifecycleOwner, SavedStateRegistryOwner 
 
     override fun onCreate() {
         super.onCreate()
-        Log.d(TAG, "Overlay service created")
         savedStateRegistryController.performRestore(null)
         lifecycleRegistry.handleLifecycleEvent(Lifecycle.Event.ON_CREATE)
         lifecycleRegistry.handleLifecycleEvent(Lifecycle.Event.ON_START)
         lifecycleRegistry.handleLifecycleEvent(Lifecycle.Event.ON_RESUME)
-
         windowManager = getSystemService(WINDOW_SERVICE) as WindowManager
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         when (intent?.action) {
             ACTION_HIDE -> stopServiceAndHideOverlay()
-
             ACTION_STOP_CAPTURE -> serviceScope.launch {
                 sessionRepository.stopSession()
                 stopServiceAndHideOverlay()
             }
-
-            else -> {
-                goForeground()
-                showOverlay()
-                startWatchingSession()
+            ACTION_TOGGLE_PAUSE -> serviceScope.launch {
+                val cur = settingsRepository.settings.first().capturePaused
+                settingsRepository.set(SettingsKeys.CAPTURE_PAUSED, !cur)
+            }
+            else -> {   // ACTION_SHOW, or null when Android restarts the sticky service
+                goForeground()   // must be first: startForegroundService() allows ~5 seconds
+                serviceScope.launch {
+                    settings = settingsRepository.settings.first()
+                    showOverlay()
+                    startWatchers()
+                }
             }
         }
         return START_STICKY
     }
 
-    private fun goForeground() {
+    // ------------------------------------------------------------------ notification
+    private fun buildNotification(folderName: String?, paused: Boolean): Notification {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
             getSystemService(NotificationManager::class.java).createNotificationChannel(
                 NotificationChannel(CHANNEL_ID, "Screenshot capture", NotificationManager.IMPORTANCE_LOW)
             )
         }
-
         val flags = PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT
-        val openApp = PendingIntent.getActivity(
-            this, 0, Intent(this, MainActivity::class.java), flags
+        fun svc(code: Int, action: String) = PendingIntent.getService(
+            this, code, Intent(this, OverlayBubbleService::class.java).setAction(action), flags
         )
-        val stop = PendingIntent.getService(
-            this, 1,
-            Intent(this, OverlayBubbleService::class.java).setAction(ACTION_STOP_CAPTURE),
-            flags
-        )
-
-        val notification = NotificationCompat.Builder(this, CHANNEL_ID)
-            .setSmallIcon(android.R.drawable.ic_menu_camera)
-            .setContentTitle("SSS is capturing screenshots")
-            .setContentText("Tap to open. New screenshots go to your selected folder.")
-            .setContentIntent(openApp)
-            .addAction(0, "Stop", stop)
+        val open = PendingIntent.getActivity(this, 0, Intent(this, MainActivity::class.java), flags)
+        return NotificationCompat.Builder(this, CHANNEL_ID)
+            .setSmallIcon(R.drawable.ic_stat_4s)
+            .setColor(0xFFC8F135.toInt())
+            .setContentTitle(if (paused) "4S is paused" else "4S is capturing")
+            .setContentText(folderName?.let { "Saving to $it" } ?: "New screenshots go to your selected folder")
+            .setContentIntent(open)
             .setOngoing(true)
+            .setOnlyAlertOnce(true)
+            .addAction(0, "Stop", svc(1, ACTION_STOP_CAPTURE))
+            .addAction(0, if (paused) "Resume" else "Pause", svc(2, ACTION_TOGGLE_PAUSE))
+            .addAction(0, "Show bubble", svc(3, ACTION_SHOW))
             .build()
+    }
 
+    private fun goForeground() {
+        val n = buildNotification(null, settings.capturePaused)
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE) {
-            startForeground(NOTIF_ID, notification, ServiceInfo.FOREGROUND_SERVICE_TYPE_SPECIAL_USE)
+            startForeground(NOTIF_ID, n, ServiceInfo.FOREGROUND_SERVICE_TYPE_SPECIAL_USE)
         } else {
-            startForeground(NOTIF_ID, notification)
+            startForeground(NOTIF_ID, n)
         }
     }
 
-    private fun startWatchingSession() {
-        if (sessionJob?.isActive == true) return
-        sessionJob = serviceScope.launch {
-            sessionRepository.observeActiveSession().collect { session ->
-                if (session != null && session.isActive) {
-                    screenshotObserver.start()
-                } else {
-                    screenshotObserver.stop()
-                    delay(2_000)
-                    val again = sessionRepository.getActiveSession()
-                    if (again == null || !again.isActive) stopServiceAndHideOverlay()
+    private fun updateNotification(folderName: String?, paused: Boolean) {
+        getSystemService(NotificationManager::class.java).notify(NOTIF_ID, buildNotification(folderName, paused))
+    }
+
+    // ------------------------------------------------------------------ watchers
+    @OptIn(ExperimentalCoroutinesApi::class)
+    private fun startWatchers() {
+        if (settingsJob?.isActive != true) {
+            settingsJob = serviceScope.launch {
+                settingsRepository.settings.collect { s ->
+                    settings = s
+                    applyBubbleSettings()
                 }
+            }
+        }
+
+        if (sessionJob?.isActive != true) {
+            sessionJob = serviceScope.launch {
+                combine(
+                    sessionRepository.observeActiveSession(),
+                    settingsRepository.settings.map { it.capturePaused }.distinctUntilChanged()
+                ) { s, p -> s to p }.collect { (session, paused) ->
+                    if (session != null && session.isActive) {
+                        bubbleView?.paused = paused
+                        val name = folderRepository.getFoldersOnce().firstOrNull { it.id == session.folderId }?.name
+                        updateNotification(name, paused)
+                        if (paused) screenshotObserver.stop() else screenshotObserver.start()   // start() is idempotent
+                        val prev = lastFolderId
+                        if (prev != null && prev != session.folderId && name != null) showFolderLabel(name)
+                        lastFolderId = session.folderId
+                    } else {
+                        screenshotObserver.stop()
+                        // the app writes the session row a moment AFTER starting this service: wait and re-check
+                        delay(2_000)
+                        val again = sessionRepository.getActiveSession()
+                        if (again == null || !again.isActive) stopServiceAndHideOverlay()
+                    }
+                }
+            }
+        }
+
+        if (badgeJob?.isActive != true) {
+            badgeJob = serviceScope.launch {
+                sessionRepository.observeActiveSession()
+                    .map { it?.takeIf { s -> s.isActive }?.folderId }
+                    .distinctUntilChanged()
+                    .flatMapLatest { id ->
+                        if (id == null) flowOf<Pair<Long?, Int>>(null to 0)
+                        else screenshotRepository.getScreenshotsByFolder(id).map { id to it.size }
+                    }
+                    .collect { cur ->
+                        val prev = lastBadge
+                        lastBadge = cur
+                        bubbleView?.count = cur.second
+                        // pulse only when the SAME folder got a new screenshot (not when switching folders)
+                        if (prev != null && prev.first == cur.first && cur.second > prev.second) {
+                            bubbleView?.pulse()
+                            resetIdleTimer()
+                            if (settings.haptic) bubbleView?.performHapticFeedback(HapticFeedbackConstants.CLOCK_TICK)
+                        }
+                    }
             }
         }
     }
 
-    private fun onScreenshotDetected(uri: Uri) {
+    private fun onScreenshotDetected(uri: Uri) {   // called on a background thread
         serviceScope.launch(Dispatchers.IO) {
             try {
                 val session = sessionRepository.getActiveSession()
                 if (session == null || !session.isActive) return@launch
-                screenshotRepository.addScreenshotIfAbsent(
-                    folderId = session.folderId,
-                    filePath = uri.toString()
-                )
+                val inserted = screenshotRepository.addScreenshotIfAbsent(session.folderId, uri.toString())
+                if (inserted && settings.autoCrop) metaRepository.analyzeUri(uri.toString())
             } catch (e: CancellationException) {
                 throw e
             } catch (e: Exception) {
-                Log.e(TAG, "Failed to save screenshot $uri", e)
+                Log.e(TAG, "Failed to save screenshot $uri", e)   // e.g. folder deleted meanwhile: never crash
             }
         }
     }
 
+    // ------------------------------------------------------------------ bubble
+    private fun dp(v: Int) = (v * resources.displayMetrics.density + 0.5f).toInt()
+    private fun bubbleSizePx() = dp(when (settings.bubbleSize) { 0 -> 40; 2 -> 56; else -> 48 })
+    private fun overlayType() =
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY
+        else @Suppress("DEPRECATION") WindowManager.LayoutParams.TYPE_PHONE
+
     private fun showOverlay() {
-        if (!Settings.canDrawOverlays(this)) {
-            Log.w(TAG, "Overlay permission missing")
-            return
-        }
-
-        if (bubbleView != null) {
-            Log.d(TAG, "4S bubble already visible")
-            return
-        }
-
-        Log.d(TAG, "Showing AssistiveTouch 4S bubble")
+        if (!Settings.canDrawOverlays(this) || bubbleView != null) return
         try {
-            val density = resources.displayMetrics.density
-            val bubbleSizeDp = 46
-            val sizePx = (bubbleSizeDp * density + 0.5f).toInt()
-
-            val assistiveTouchView = AssistiveTouchBubbleView(this).apply {
-                contentDescription = "SSS capture controls"
+            val size = bubbleSizePx()
+            val sw = resources.displayMetrics.widthPixels
+            val sh = resources.displayMetrics.heightPixels
+            val view = AssistiveBubbleView(this).apply {
+                contentDescription = "4S capture controls"
+                count = max(0, lastBadge?.second ?: 0)
+                paused = settings.capturePaused
             }
-
-            bubbleView = assistiveTouchView
-
-            val layoutType = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-                WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY
-            } else {
-                @Suppress("DEPRECATION")
-                WindowManager.LayoutParams.TYPE_PHONE
-            }
-
-            bubbleParams = WindowManager.LayoutParams(
-                sizePx,
-                sizePx,
-                layoutType,
-                WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or
-                        WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN,
+            val p = WindowManager.LayoutParams(
+                size, size, overlayType(),
+                WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN,
                 PixelFormat.TRANSLUCENT
             ).apply {
                 gravity = Gravity.TOP or Gravity.START
-                x = 50
-                y = 350
+                x = if (settings.bubbleX >= 0) settings.bubbleX.coerceIn(0, max(0, sw - size)) else dp(8)
+                y = if (settings.bubbleY >= 0) settings.bubbleY.coerceIn(0, max(0, sh - size)) else dp(200)
             }
-
-            var initialX = 0
-            var initialY = 0
-            var initialTouchX = 0f
-            var initialTouchY = 0f
-            var isMoving = false
-            var isLongPressed = false
-
+            bubbleView = view
+            bubbleParams = p
+            attachBubbleTouch(view)
+            windowManager?.addView(view, p)
             resetIdleTimer()
-
-            bubbleView?.setOnTouchListener(object : View.OnTouchListener {
-                override fun onTouch(v: View, event: MotionEvent): Boolean {
-                    resetIdleTimer()
-
-                    when (event.action) {
-                        MotionEvent.ACTION_DOWN -> {
-                            initialX = bubbleParams?.x ?: 0
-                            initialY = bubbleParams?.y ?: 0
-                            initialTouchX = event.rawX
-                            initialTouchY = event.rawY
-                            isMoving = false
-                            isLongPressed = false
-
-                            longPressRunnable = Runnable {
-                                isLongPressed = true
-                                Log.d(TAG, "Long press detected -> showing red close control")
-                                showRedCloseControl()
-                            }
-                            mainHandler.postDelayed(longPressRunnable!!, 500)
-                            return true
-                        }
-                        MotionEvent.ACTION_MOVE -> {
-                            val dx = (event.rawX - initialTouchX).toInt()
-                            val dy = (event.rawY - initialTouchY).toInt()
-
-                            if (abs(dx) > 8 || abs(dy) > 8) {
-                                if (!isMoving) {
-                                    isMoving = true
-                                    longPressRunnable?.let { mainHandler.removeCallbacks(it) }
-                                    if (isRedDotShowing) {
-                                        removeRedCloseControl()
-                                    }
-                                }
-
-                                bubbleParams?.let { p ->
-                                    p.x = initialX + dx
-                                    p.y = initialY + dy
-
-                                    val screenWidth = resources.displayMetrics.widthPixels
-                                    val screenHeight = resources.displayMetrics.heightPixels
-                                    p.x = p.x.coerceIn(0, screenWidth - sizePx)
-                                    p.y = p.y.coerceIn(0, screenHeight - sizePx)
-
-                                    try {
-                                        windowManager?.updateViewLayout(bubbleView, p)
-                                        if (isRedDotShowing) {
-                                            updateRedDotPosition()
-                                        }
-                                    } catch (e: Exception) {
-                                        Log.e(TAG, "Error updating bubble layout", e)
-                                    }
-                                }
-                            }
-                            return true
-                        }
-                        MotionEvent.ACTION_UP -> {
-                            longPressRunnable?.let { mainHandler.removeCallbacks(it) }
-
-                            if (!isMoving && !isLongPressed) {
-                                if (isRedDotShowing) {
-                                    removeRedCloseControl()
-                                } else {
-                                    Log.d(TAG, "4S bubble short tap -> toggling panel")
-                                    toggleFolderPanel()
-                                }
-                            }
-                            return true
-                        }
-                        MotionEvent.ACTION_CANCEL -> {
-                            longPressRunnable?.let { mainHandler.removeCallbacks(it) }
-                            return true
-                        }
-                    }
-                    return false
-                }
-            })
-
-            windowManager?.addView(bubbleView, bubbleParams)
         } catch (e: Exception) {
-            Log.e(TAG, "Failed to show 4S bubble overlay", e)
+            Log.e(TAG, "Failed to show bubble", e)
             bubbleView = null
         }
     }
 
+    private fun attachBubbleTouch(view: View) {
+        var initialX = 0
+        var initialY = 0
+        var touchX = 0f
+        var touchY = 0f
+        var moving = false
+        var longPressed = false
+        view.setOnTouchListener { _, event ->
+            resetIdleTimer()
+            when (event.action) {
+                MotionEvent.ACTION_DOWN -> {
+                    initialX = bubbleParams?.x ?: 0
+                    initialY = bubbleParams?.y ?: 0
+                    touchX = event.rawX
+                    touchY = event.rawY
+                    moving = false
+                    longPressed = false
+                    longPressRunnable = Runnable { longPressed = true; showCloseControl() }
+                    mainHandler.postDelayed(longPressRunnable!!, 500)
+                    true
+                }
+                MotionEvent.ACTION_MOVE -> {
+                    val dx = (event.rawX - touchX).toInt()
+                    val dy = (event.rawY - touchY).toInt()
+                    if (abs(dx) > 8 || abs(dy) > 8) {
+                        if (!moving) {
+                            moving = true
+                            longPressRunnable?.let { mainHandler.removeCallbacks(it) }
+                            removeCloseControl()
+                            closeFolderPanel()
+                        }
+                        bubbleParams?.let { p ->
+                            val size = bubbleSizePx()
+                            p.x = (initialX + dx).coerceIn(0, max(0, resources.displayMetrics.widthPixels - size))
+                            p.y = (initialY + dy).coerceIn(0, max(0, resources.displayMetrics.heightPixels - size))
+                            updateBubbleLayout()
+                        }
+                    }
+                    true
+                }
+                MotionEvent.ACTION_UP -> {
+                    longPressRunnable?.let { mainHandler.removeCallbacks(it) }
+                    if (moving) {
+                        if (settings.snapEdge) snapToEdge() else savePosition()
+                    } else if (!longPressed) {
+                        if (closeView != null) removeCloseControl() else toggleFolderPanel()
+                    }
+                    true
+                }
+                MotionEvent.ACTION_CANCEL -> {
+                    longPressRunnable?.let { mainHandler.removeCallbacks(it) }
+                    true
+                }
+                else -> false
+            }
+        }
+    }
+
+    private fun updateBubbleLayout() {
+        try { windowManager?.updateViewLayout(bubbleView, bubbleParams) } catch (e: Exception) { Log.e(TAG, "updateBubbleLayout", e) }
+    }
+
+    private fun snapToEdge() {
+        val p = bubbleParams ?: return
+        val size = bubbleSizePx()
+        val sw = resources.displayMetrics.widthPixels
+        val target = if (p.x + size / 2 < sw / 2) 0 else sw - size
+        ValueAnimator.ofInt(p.x, target).apply {
+            duration = 180
+            addUpdateListener { p.x = it.animatedValue as Int; updateBubbleLayout() }
+            addListener(object : AnimatorListenerAdapter() {
+                override fun onAnimationEnd(animation: Animator) { savePosition() }
+            })
+        }.start()
+    }
+
+    private fun savePosition() {
+        val p = bubbleParams ?: return
+        serviceScope.launch {
+            settingsRepository.set(SettingsKeys.BUBBLE_X, p.x)
+            settingsRepository.set(SettingsKeys.BUBBLE_Y, p.y)
+        }
+    }
+
+    private fun applyBubbleSettings() {
+        val p = bubbleParams ?: return
+        val size = bubbleSizePx()
+        if (p.width != size) { p.width = size; p.height = size; updateBubbleLayout() }
+        bubbleView?.paused = settings.capturePaused
+        resetIdleTimer()
+    }
+
     private fun resetIdleTimer() {
-        bubbleView?.alpha = 1.0f
+        bubbleView?.alpha = 1f
         mainHandler.removeCallbacks(idleRunnable)
         mainHandler.postDelayed(idleRunnable, 2500)
     }
 
-    private fun showRedCloseControl() {
-        if (isRedDotShowing || bubbleView == null) return
-
+    // ------------------------------------------------------------------ small red close control (16dp visual, 40dp touch)
+    private fun showCloseControl() {
+        if (closeView != null || bubbleView == null) return
         try {
-            val density = resources.displayMetrics.density
-            val dotSizePx = (24 * density + 0.5f).toInt()
-
-            val dotView = RedCloseDotView(this).apply {
+            val bp = bubbleParams ?: return
+            val size = bubbleSizePx()
+            val touch = dp(40)
+            val sw = resources.displayMetrics.widthPixels
+            val view = CloseDotView(this).apply {
                 contentDescription = "Hide 4S button"
-                setOnClickListener {
-                    Log.d(TAG, "Red close control tapped -> hiding 4S bubble ONLY (capture session remains ACTIVE)")
-                    hideBubbleOnly()
-                }
+                setOnClickListener { hideBubbleOnly() }   // capture keeps running
             }
-
-            redDotView = dotView
-
-            val layoutType = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-                WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY
-            } else {
-                @Suppress("DEPRECATION")
-                WindowManager.LayoutParams.TYPE_PHONE
-            }
-
-            redDotParams = WindowManager.LayoutParams(
-                dotSizePx,
-                dotSizePx,
-                layoutType,
-                WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or
-                        WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN,
+            val p = WindowManager.LayoutParams(
+                touch, touch, overlayType(),
+                WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN,
                 PixelFormat.TRANSLUCENT
             ).apply {
                 gravity = Gravity.TOP or Gravity.START
-                x = (bubbleParams?.x ?: 0) + (46 * density).toInt() - (12 * density).toInt()
-                y = (bubbleParams?.y ?: 0) - (8 * density).toInt()
+                x = (bp.x + size - dp(28)).coerceIn(0, max(0, sw - touch))   // bottom-right corner (badge is top-right)
+                y = bp.y + size - dp(28)
             }
-
-            windowManager?.addView(redDotView, redDotParams)
-            isRedDotShowing = true
+            closeView = view
+            windowManager?.addView(view, p)
         } catch (e: Exception) {
-            Log.e(TAG, "Failed to show red close control", e)
-            redDotView = null
-            isRedDotShowing = false
+            Log.e(TAG, "showCloseControl", e)
+            closeView = null
         }
     }
 
-    private fun updateRedDotPosition() {
-        if (redDotView != null && bubbleParams != null && redDotParams != null) {
-            val density = resources.displayMetrics.density
-            redDotParams?.x = (bubbleParams?.x ?: 0) + (46 * density).toInt() - (12 * density).toInt()
-            redDotParams?.y = (bubbleParams?.y ?: 0) - (8 * density).toInt()
-            try {
-                windowManager?.updateViewLayout(redDotView, redDotParams)
-            } catch (e: Exception) {
-                Log.e(TAG, "Error updating red dot position", e)
-            }
-        }
-    }
-
-    private fun removeRedCloseControl() {
-        if (redDotView != null) {
-            try {
-                windowManager?.removeView(redDotView)
-            } catch (e: Exception) {
-                Log.e(TAG, "Error removing red dot control", e)
-            } finally {
-                redDotView = null
-                isRedDotShowing = false
-            }
-        }
+    private fun removeCloseControl() {
+        closeView?.let { try { windowManager?.removeView(it) } catch (e: Exception) { } }
+        closeView = null
     }
 
     private fun hideBubbleOnly() {
-        removeRedCloseControl()
+        removeCloseControl()
         closeFolderPanel()
+        removeLabel()
         mainHandler.removeCallbacks(idleRunnable)
-        if (bubbleView != null) {
-            try {
-                windowManager?.removeView(bubbleView)
-                Log.d(TAG, "4S bubble hidden from screen (Capture remains ACTIVE)")
-            } catch (e: Exception) {
-                Log.e(TAG, "Error removing bubble view", e)
-            } finally {
-                bubbleView = null
-            }
+        bubbleView?.let { try { windowManager?.removeView(it) } catch (e: Exception) { } }
+        bubbleView = null
+    }
+
+    // ------------------------------------------------------------------ folder-name label (1.5 s after switching folders)
+    private fun removeLabel() {
+        mainHandler.removeCallbacks(removeLabelRunnable)
+        labelView?.let { try { windowManager?.removeView(it) } catch (e: Exception) { } }
+        labelView = null
+    }
+
+    private fun showFolderLabel(name: String) {
+        val bp = bubbleParams ?: return
+        if (bubbleView == null) return
+        removeLabel()
+        val size = bubbleSizePx()
+        val sw = resources.displayMetrics.widthPixels
+        val left = bp.x + size / 2 < sw / 2
+        val tv = TextView(this).apply {
+            text = name
+            maxLines = 1
+            textSize = 12f
+            typeface = Typeface.DEFAULT_BOLD
+            setTextColor(0xFF0B0B0D.toInt())
+            setPadding(dp(10), dp(6), dp(10), dp(6))
+            background = GradientDrawable().apply { setColor(0xFFECECEE.toInt()); cornerRadius = dp(10).toFloat() }
+        }
+        val lp = WindowManager.LayoutParams(
+            WindowManager.LayoutParams.WRAP_CONTENT, WindowManager.LayoutParams.WRAP_CONTENT, overlayType(),
+            WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE or WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN,
+            PixelFormat.TRANSLUCENT
+        ).apply {
+            gravity = Gravity.TOP or (if (left) Gravity.START else Gravity.END)
+            x = if (left) bp.x + size + dp(8) else (sw - bp.x) + dp(8)
+            y = bp.y + (size - dp(28)) / 2
+        }
+        try {
+            labelView = tv
+            windowManager?.addView(tv, lp)
+            mainHandler.postDelayed(removeLabelRunnable, 1500)
+        } catch (e: Exception) {
+            labelView = null
         }
     }
 
-    private fun toggleFolderPanel() {
-        if (isPanelOpen) {
-            closeFolderPanel()
-        } else {
-            openFolderPanel()
-        }
+    // ------------------------------------------------------------------ folder panel
+    private fun toggleFolderPanel() { if (panelView != null) closeFolderPanel() else openFolderPanel() }
+
+    private fun setPanelFocusable(focusable: Boolean) {
+        val p = panelParams ?: return
+        val v = panelView ?: return
+        p.flags = if (focusable) p.flags and WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE.inv()
+        else p.flags or WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE
+        try { windowManager?.updateViewLayout(v, p) } catch (e: Exception) { }
     }
 
     private fun openFolderPanel() {
         if (panelView != null) return
-
         try {
-            val metrics = resources.displayMetrics
-            val screenWidth = metrics.widthPixels
-            val density = metrics.density
-
-            val targetWidthPx = (screenWidth * 0.28f).toInt().coerceIn(
-                (220 * density).toInt(),
-                (360 * density).toInt()
-            )
-
-            val layoutType = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-                WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY
-            } else {
-                @Suppress("DEPRECATION")
-                WindowManager.LayoutParams.TYPE_PHONE
-            }
-
-            val panelParams = WindowManager.LayoutParams(
-                targetWidthPx,
-                WindowManager.LayoutParams.WRAP_CONTENT,
-                layoutType,
-                WindowManager.LayoutParams.FLAG_NOT_TOUCH_MODAL or
+            val bp = bubbleParams
+            val size = bubbleSizePx()
+            val sw = resources.displayMetrics.widthPixels
+            val left = (bp?.x ?: 0) + size / 2 < sw / 2
+            val params = WindowManager.LayoutParams(
+                min(dp(300), sw - dp(24)), WindowManager.LayoutParams.WRAP_CONTENT, overlayType(),
+                WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or
+                        WindowManager.LayoutParams.FLAG_NOT_TOUCH_MODAL or
+                        WindowManager.LayoutParams.FLAG_WATCH_OUTSIDE_TOUCH or
                         WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN,
                 PixelFormat.TRANSLUCENT
             ).apply {
-                gravity = Gravity.START or Gravity.CENTER_VERTICAL
-                x = 0
+                gravity = (if (left) Gravity.START else Gravity.END) or Gravity.CENTER_VERTICAL
+                x = size + dp(12)   // beside the bubble
+                softInputMode = WindowManager.LayoutParams.SOFT_INPUT_ADJUST_PAN
             }
-
-            val composeView = ComposeView(this).apply {
+            val cv = ComposeView(this).apply {
                 setViewTreeLifecycleOwner(this@OverlayBubbleService)
                 setViewTreeSavedStateRegistryOwner(this@OverlayBubbleService)
+                setOnTouchListener { _, e ->
+                    if (e.action == MotionEvent.ACTION_OUTSIDE) { closeFolderPanel(); true } else false
+                }
                 setContent {
                     SSSTheme {
                         FloatingFolderPanel(
                             folderRepository = folderRepository,
                             sessionRepository = sessionRepository,
+                            screenshotRepository = screenshotRepository,
+                            settingsRepository = settingsRepository,
+                            scope = serviceScope,
                             onClose = { closeFolderPanel() },
-                            scope = serviceScope
+                            onOpenApp = {
+                                closeFolderPanel()
+                                startActivity(Intent(this@OverlayBubbleService, MainActivity::class.java).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_REORDER_TO_FRONT))
+                            },
+                            onStop = {
+                                serviceScope.launch { sessionRepository.stopSession(); stopServiceAndHideOverlay() }
+                            },
+                            onFocusable = { setPanelFocusable(it) },
+                            onRemoveLast = { shot -> serviceScope.launch { undoManager.delete(listOf(shot)) } }
                         )
                     }
                 }
             }
-
-            panelView = composeView
-            windowManager?.addView(panelView, panelParams)
-            isPanelOpen = true
-            Log.d(TAG, "Floating folder panel opened from LEFT")
+            panelView = cv
+            panelParams = params
+            windowManager?.addView(cv, params)
         } catch (e: Exception) {
-            Log.e(TAG, "Failed to open floating folder panel", e)
+            Log.e(TAG, "Failed to open panel", e)
             panelView = null
-            isPanelOpen = false
+            panelParams = null
         }
     }
 
     private fun closeFolderPanel() {
-        if (panelView != null) {
-            try {
-                windowManager?.removeView(panelView)
-                Log.d(TAG, "Floating folder panel closed")
-            } catch (e: Exception) {
-                Log.e(TAG, "Error removing panel view", e)
-            } finally {
-                panelView = null
-                isPanelOpen = false
-            }
-        }
+        panelView?.let { try { windowManager?.removeView(it) } catch (e: Exception) { } }
+        panelView = null
+        panelParams = null
     }
 
+    // ------------------------------------------------------------------ stop
     private fun stopServiceAndHideOverlay() {
         screenshotObserver.stop()
         hideBubbleOnly()
@@ -587,283 +587,6 @@ class OverlayBubbleService : Service(), LifecycleOwner, SavedStateRegistryOwner 
         screenshotObserver.stop()
         serviceScope.cancel()
         mainHandler.removeCallbacksAndMessages(null)
-        removeRedCloseControl()
-        closeFolderPanel()
-        if (bubbleView != null) {
-            try {
-                windowManager?.removeView(bubbleView)
-            } catch (e: Exception) {
-                // ignore
-            }
-            bubbleView = null
-        }
-        Log.d(TAG, "Overlay service destroyed")
-    }
-}
-
-class AssistiveTouchBubbleView(context: Context) : View(context) {
-
-    private val density = context.resources.displayMetrics.density
-    private val outerPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-        color = AndroidColor.parseColor("#DC1E1E22")
-        style = Paint.Style.FILL
-    }
-    private val middlePaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-        color = AndroidColor.parseColor("#993C3C42")
-        style = Paint.Style.FILL
-    }
-    private val innerPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-        color = AndroidColor.parseColor("#66636366")
-        style = Paint.Style.FILL
-    }
-    private val textPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-        color = AndroidColor.WHITE
-        textSize = 13f * density
-        typeface = Typeface.create(Typeface.DEFAULT, Typeface.BOLD)
-        textAlign = Paint.Align.CENTER
-    }
-
-    override fun onDraw(canvas: Canvas) {
-        super.onDraw(canvas)
-        val cx = width / 2f
-        val cy = height / 2f
-        val radius = Math.min(width, height) / 2f
-
-        canvas.drawCircle(cx, cy, radius, outerPaint)
-        canvas.drawCircle(cx, cy, radius * 0.76f, middlePaint)
-        canvas.drawCircle(cx, cy, radius * 0.54f, innerPaint)
-
-        val fontMetrics = textPaint.fontMetrics
-        val textY = cy - (fontMetrics.descent + fontMetrics.ascent) / 2f
-        canvas.drawText("4S", cx, textY, textPaint)
-    }
-}
-
-class RedCloseDotView(context: Context) : View(context) {
-
-    private val density = context.resources.displayMetrics.density
-    private val bgPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-        color = AndroidColor.parseColor("#FF3B30")
-        style = Paint.Style.FILL
-    }
-    private val xPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-        color = AndroidColor.WHITE
-        strokeWidth = 2.5f * density
-        strokeCap = Paint.Cap.ROUND
-        style = Paint.Style.STROKE
-    }
-
-    override fun onDraw(canvas: Canvas) {
-        super.onDraw(canvas)
-        val cx = width / 2f
-        val cy = height / 2f
-        val radius = Math.min(width, height) / 2f
-
-        canvas.drawCircle(cx, cy, radius, bgPaint)
-
-        val offset = radius * 0.38f
-        canvas.drawLine(cx - offset, cy - offset, cx + offset, cy + offset, xPaint)
-        canvas.drawLine(cx + offset, cy - offset, cx - offset, cy + offset, xPaint)
-    }
-}
-
-@Composable
-fun FloatingFolderPanel(
-    folderRepository: FolderRepository,
-    sessionRepository: SessionRepository,
-    onClose: () -> Unit,
-    scope: CoroutineScope
-) {
-    val folders by folderRepository.folders.collectAsState(initial = emptyList())
-    val activeSessionFlow = remember(sessionRepository) { sessionRepository.observeActiveSession() }
-    val activeSession by activeSessionFlow.collectAsState(initial = null)
-    val activeFolderId = activeSession?.folderId
-
-    var showNewFolderInput by remember { mutableStateOf(false) }
-    var newFolderName by remember { mutableStateOf("") }
-
-    Surface(
-        shape = RoundedCornerShape(topEnd = 16.dp, bottomEnd = 16.dp),
-        color = Color(0xFF1C1C1E),
-        shadowElevation = 10.dp,
-        modifier = Modifier
-            .fillMaxWidth()
-            .wrapContentHeight()
-    ) {
-        Column(
-            modifier = Modifier.padding(12.dp)
-        ) {
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.SpaceBetween,
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    Text(
-                        text = "4S",
-                        style = MaterialTheme.typography.titleLarge,
-                        fontWeight = FontWeight.Bold,
-                        color = Color.White
-                    )
-                    Spacer(modifier = Modifier.width(6.dp))
-                    Text(
-                        text = "🟢 Active",
-                        style = MaterialTheme.typography.labelSmall,
-                        color = Color(0xFF4CAF50)
-                    )
-                }
-
-                IconButton(
-                    onClick = onClose,
-                    modifier = Modifier.size(24.dp)
-                ) {
-                    Icon(
-                        imageVector = Icons.Default.Close,
-                        contentDescription = "Close panel",
-                        tint = Color.White
-                    )
-                }
-            }
-
-            Spacer(modifier = Modifier.height(8.dp))
-            HorizontalDivider(color = Color(0xFF33333F))
-            Spacer(modifier = Modifier.height(8.dp))
-
-            Text(
-                text = "Select Folder",
-                style = MaterialTheme.typography.labelMedium,
-                color = Color.Gray,
-                fontSize = 11.sp
-            )
-
-            Spacer(modifier = Modifier.height(6.dp))
-
-            LazyColumn(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .heightIn(max = 240.dp)
-            ) {
-                items(folders, key = { it.id }) { folder ->
-                    val isActive = folder.id == activeFolderId
-                    Row(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .padding(vertical = 3.dp)
-                            .background(
-                                color = if (isActive) Color(0xFF2C2C2E) else Color.Transparent,
-                                shape = RoundedCornerShape(8.dp)
-                            )
-                            .clickable {
-                                scope.launch {
-                                    sessionRepository.switchActiveFolder(folder.id)
-                                }
-                            }
-                            .padding(horizontal = 8.dp, vertical = 6.dp),
-                        verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.SpaceBetween
-                    ) {
-                        Row(
-                            verticalAlignment = Alignment.CenterVertically,
-                            modifier = Modifier.weight(1f)
-                        ) {
-                            Icon(
-                                imageVector = Icons.Default.Folder,
-                                contentDescription = "Folder",
-                                tint = if (isActive) Color(0xFF64B5F6) else Color.LightGray,
-                                modifier = Modifier.size(18.dp)
-                            )
-                            Spacer(modifier = Modifier.width(8.dp))
-                            Text(
-                                text = folder.name,
-                                style = MaterialTheme.typography.bodyMedium,
-                                fontWeight = if (isActive) FontWeight.Bold else FontWeight.Normal,
-                                color = Color.White,
-                                maxLines = 1
-                            )
-                        }
-
-                        if (isActive) {
-                            Icon(
-                                imageVector = Icons.Default.Check,
-                                contentDescription = "Active folder",
-                                tint = Color(0xFF64B5F6),
-                                modifier = Modifier.size(18.dp)
-                            )
-                        }
-                    }
-                }
-            }
-
-            Spacer(modifier = Modifier.height(8.dp))
-            HorizontalDivider(color = Color(0xFF33333F))
-            Spacer(modifier = Modifier.height(8.dp))
-
-            if (showNewFolderInput) {
-                Column(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .padding(top = 4.dp)
-                ) {
-                    OutlinedTextField(
-                        value = newFolderName,
-                        onValueChange = { newFolderName = it },
-                        label = { Text("Folder name", fontSize = 12.sp) },
-                        singleLine = true,
-                        modifier = Modifier.fillMaxWidth()
-                    )
-                    Spacer(modifier = Modifier.height(6.dp))
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.End
-                    ) {
-                        TextButton(
-                            onClick = {
-                                showNewFolderInput = false
-                                newFolderName = ""
-                            }
-                        ) {
-                            Text("Cancel", fontSize = 12.sp)
-                        }
-                        Button(
-                            onClick = {
-                                val trimmed = newFolderName.trim()
-                                if (trimmed.isNotEmpty()) {
-                                    scope.launch {
-                                        val newId = folderRepository.addFolder(trimmed)
-                                        sessionRepository.switchActiveFolder(newId)
-                                        newFolderName = ""
-                                        showNewFolderInput = false
-                                    }
-                                }
-                            }
-                        ) {
-                            Text("Create", fontSize = 12.sp)
-                        }
-                    }
-                }
-            } else {
-                Row(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .clickable { showNewFolderInput = true }
-                        .padding(vertical = 6.dp, horizontal = 4.dp),
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    Icon(
-                        imageVector = Icons.Default.Add,
-                        contentDescription = "Add folder",
-                        tint = Color(0xFF64B5F6),
-                        modifier = Modifier.size(18.dp)
-                    )
-                    Spacer(modifier = Modifier.width(6.dp))
-                    Text(
-                        text = "New Folder",
-                        style = MaterialTheme.typography.bodyMedium,
-                        fontWeight = FontWeight.Medium,
-                        color = Color(0xFF64B5F6)
-                    )
-                }
-            }
-        }
+        hideBubbleOnly()
     }
 }

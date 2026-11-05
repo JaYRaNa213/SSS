@@ -67,6 +67,17 @@ class AllScreenshotsRepository(
         }
     }
 
+    /** Used by Undo: makes the screenshots eligible for "Other" again. */
+    fun unhide(uris: Collection<String>) {
+        val ids = uris.mapNotNull { idFromUri(it)?.toString() }.toSet()
+        if (ids.isEmpty()) return
+        synchronized(prefsLock) {
+            val current = prefs.getStringSet(KEY_HIDDEN_IDS, emptySet()).orEmpty().toMutableSet()
+            current.removeAll(ids)
+            prefs.edit().putStringSet(KEY_HIDDEN_IDS, current).apply()
+        }
+    }
+
     private fun hiddenIds(): Set<Long> =
         prefs.getStringSet(KEY_HIDDEN_IDS, emptySet()).orEmpty()
             .mapNotNull { it.toLongOrNull() }
