@@ -4,15 +4,20 @@ import android.content.Context
 import android.graphics.Bitmap
 import android.graphics.BitmapFactory
 import android.graphics.Canvas
+import android.graphics.Color
 import android.graphics.Matrix
 import android.graphics.Paint
 import android.graphics.RectF
 import android.graphics.pdf.PdfDocument
 import android.net.Uri
+import android.provider.MediaStore
+import android.util.Log
 import com.sss.app.data.local.ScreenshotMetaEntity
 import com.sss.app.ui.common.MetaMath
 import java.io.ByteArrayOutputStream
 import java.io.File
+import java.io.FileInputStream
+import java.io.InputStream
 import java.io.OutputStream
 import kotlin.math.max
 import kotlin.math.min
@@ -37,6 +42,8 @@ class PdfPageSource(val path: String, val meta: ScreenshotMetaEntity?, val rotat
 
 object PdfBuilder {
 
+    private const val TAG = "PdfBuilder"
+
     /** Blocking. Call from a background thread. [checkCancel] should throw when the job was cancelled. */
     fun build(
         context: Context,
@@ -49,9 +56,13 @@ object PdfBuilder {
         val doc = PdfDocument()
         try {
             var done = 0
-            pages.chunked(o.perPage.coerceIn(1, 2)).forEachIndexed { gi, group ->
+            val groups = pages.chunked(o.perPage.coerceIn(1, 2))
+            groups.forEachIndexed { gi, group ->
                 checkCancel()
                 val bitmaps = group.map { load(context, it, o) }
+                if (bitmaps.all { it == null }) {
+                    error("Could not load image file: ${group.firstOrNull()?.path}")
+                }
                 val (pw, ph) = pageSize(o, bitmaps)
                 val page = doc.startPage(PdfDocument.PageInfo.Builder(pw, ph, gi + 1).create())
                 draw(page.canvas, bitmaps, pw, ph, o)
@@ -66,53 +77,99 @@ object PdfBuilder {
         }
     }
 
-    private fun load(context: Context, src: PdfPageSource, o: PdfOptions): Bitmap? {
-        val uri = if (src.path.startsWith("content://") || src.path.startsWith("file://")) Uri.parse(src.path)
-        else Uri.fromFile(File(src.path))
+    private fun openInputStreamForPath(context: Context, path: String): InputStream? {
         val resolver = context.contentResolver
-        val bounds = BitmapFactory.Options().apply { inJustDecodeBounds = true }
-        resolver.openInputStream(uri)?.use { BitmapFactory.decodeStream(it, null, bounds) } ?: return null
-        val longSide = max(bounds.outWidth, bounds.outHeight)
-        if (longSide <= 0) return null
-        var sample = 1
-        while (longSide / (sample * 2) >= o.quality.maxDim) sample *= 2
-        var bmp = resolver.openInputStream(uri)?.use {
-            BitmapFactory.decodeStream(it, null, BitmapFactory.Options().apply { inSampleSize = sample })
-        } ?: return null
 
-        val m = src.meta
-        if (o.useCrop && m != null && MetaMath.hasCrop(m)) {
-            val x = (m.cropLeft * bmp.width).roundToInt().coerceIn(0, bmp.width - 1)
-            val y = (m.cropTop * bmp.height).roundToInt().coerceIn(0, bmp.height - 1)
-            val w = (bmp.width * (1f - m.cropLeft - m.cropRight)).roundToInt().coerceIn(1, bmp.width - x)
-            val h = (bmp.height * (1f - m.cropTop - m.cropBottom)).roundToInt().coerceIn(1, bmp.height - y)
-            val c = Bitmap.createBitmap(bmp, x, y, w, h)
-            if (c !== bmp) bmp.recycle()
-            bmp = c
+        if (path.startsWith("content://")) {
+            val uri = Uri.parse(path)
+            runCatching { resolver.openInputStream(uri) }.getOrNull()?.let { return it }
+            runCatching { resolver.openFileDescriptor(uri, "r")?.fileDescriptor }
+                .getOrNull()?.let { fd -> runCatching { FileInputStream(fd) }.getOrNull() }?.let { return it }
+            runCatching { resolver.openAssetFileDescriptor(uri, "r")?.createInputStream() }
+                .getOrNull()?.let { return it }
+            runCatching {
+                var filePath: String? = null
+                resolver.query(uri, arrayOf(MediaStore.Images.Media.DATA), null, null, null)?.use { c ->
+                    if (c.moveToFirst()) {
+                        val idx = c.getColumnIndex(MediaStore.Images.Media.DATA)
+                        if (idx >= 0) filePath = c.getString(idx)
+                    }
+                }
+                filePath?.let { p ->
+                    val f = File(p)
+                    if (f.exists()) f.inputStream() else null
+                }
+            }.getOrNull()?.let { return it }
         }
-        if (src.rotation % 360 != 0) {
-            val r = Bitmap.createBitmap(bmp, 0, 0, bmp.width, bmp.height, Matrix().apply { postRotate(src.rotation.toFloat()) }, true)
-            if (r !== bmp) bmp.recycle()
-            bmp = r
+
+        val cleanPath = when {
+            path.startsWith("file://") -> Uri.parse(path).path ?: path.removePrefix("file://")
+            else -> path
         }
-        o.quality.jpeg?.let { q ->
-            val bos = ByteArrayOutputStream()
-            bmp.compress(Bitmap.CompressFormat.JPEG, q, bos)
-            bmp.recycle()
-            val bytes = bos.toByteArray()
-            bmp = BitmapFactory.decodeByteArray(bytes, 0, bytes.size) ?: return null
+        val file = File(cleanPath)
+        if (file.exists()) {
+            runCatching { file.inputStream() }.getOrNull()?.let { return it }
         }
-        return bmp
+
+        return runCatching { resolver.openInputStream(Uri.parse(path)) }.getOrNull()
+    }
+
+    private fun load(context: Context, src: PdfPageSource, o: PdfOptions): Bitmap? {
+        return try {
+            val bytes = openInputStreamForPath(context, src.path)?.use { it.readBytes() } ?: return null
+            if (bytes.isEmpty()) return null
+
+            val bounds = BitmapFactory.Options().apply { inJustDecodeBounds = true }
+            BitmapFactory.decodeByteArray(bytes, 0, bytes.size, bounds)
+            val longSide = max(bounds.outWidth, bounds.outHeight)
+            if (longSide <= 0) return null
+
+            var sample = 1
+            while (longSide / (sample * 2) >= o.quality.maxDim) sample *= 2
+
+            val opts = BitmapFactory.Options().apply { inSampleSize = sample }
+            var bmp = BitmapFactory.decodeByteArray(bytes, 0, bytes.size, opts) ?: return null
+
+            val m = src.meta
+            if (o.useCrop && m != null && MetaMath.hasCrop(m)) {
+                val x = (m.cropLeft * bmp.width).roundToInt().coerceIn(0, max(0, bmp.width - 1))
+                val y = (m.cropTop * bmp.height).roundToInt().coerceIn(0, max(0, bmp.height - 1))
+                val w = (bmp.width * (1f - m.cropLeft - m.cropRight)).roundToInt().coerceIn(1, max(1, bmp.width - x))
+                val h = (bmp.height * (1f - m.cropTop - m.cropBottom)).roundToInt().coerceIn(1, max(1, bmp.height - y))
+                if (w > 0 && h > 0 && (w != bmp.width || h != bmp.height)) {
+                    val c = Bitmap.createBitmap(bmp, x, y, w, h)
+                    if (c !== bmp) bmp.recycle()
+                    bmp = c
+                }
+            }
+            if (src.rotation % 360 != 0) {
+                val r = Bitmap.createBitmap(bmp, 0, 0, bmp.width, bmp.height, Matrix().apply { postRotate(src.rotation.toFloat()) }, true)
+                if (r !== bmp) bmp.recycle()
+                bmp = r
+            }
+            o.quality.jpeg?.let { q ->
+                val bos = ByteArrayOutputStream()
+                bmp.compress(Bitmap.CompressFormat.JPEG, q, bos)
+                bmp.recycle()
+                val compressedBytes = bos.toByteArray()
+                bmp = BitmapFactory.decodeByteArray(compressedBytes, 0, compressedBytes.size) ?: return null
+            }
+            bmp
+        } catch (e: Exception) {
+            Log.e(TAG, "Error loading image for PDF: ${src.path}", e)
+            null
+        }
     }
 
     private fun pageSize(o: PdfOptions, bitmaps: List<Bitmap?>): Pair<Int, Int> {
         if (o.a4 || o.perPage == 2) return 595 to 842
-        val b = bitmaps.firstOrNull() ?: return 595 to 842
+        val b = bitmaps.filterNotNull().firstOrNull() ?: return 595 to 842
         val s = 842f / max(b.width, b.height)
         return (b.width * s).roundToInt().coerceAtLeast(100) to (b.height * s).roundToInt().coerceAtLeast(100)
     }
 
     private fun draw(canvas: Canvas, bitmaps: List<Bitmap?>, pw: Int, ph: Int, o: PdfOptions) {
+        canvas.drawColor(Color.WHITE)
         val m = if (o.margin) 16f else 0f
         val paint = Paint(Paint.FILTER_BITMAP_FLAG)
         if (o.perPage == 1) {

@@ -8,11 +8,11 @@ import android.graphics.Typeface
 import android.view.View
 import kotlin.math.min
 
-private const val LIME = 0xFFC8F135.toInt()
-private const val LINE = 0xFF2A2A2F.toInt()
-private const val SURFACE = 0xF2111114.toInt()
-private const val TEXT = 0xFFECECEE.toInt()
-private const val BG = 0xFF0B0B0D.toInt()
+private const val LIME = 0xFFFFFFFF.toInt()
+private const val LINE = 0xFF333333.toInt()
+private const val SURFACE = 0xF2121212.toInt()
+private const val TEXT = 0xFFFFFFFF.toInt()
+private const val BG = 0xFF000000.toInt()
 
 /** Round Graphite bubble: "4S", lime ring while capturing, pause icon when paused, count badge top-right. */
 class AssistiveBubbleView(context: Context) : View(context) {

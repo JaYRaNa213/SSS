@@ -97,7 +97,11 @@ fun SettingsScreen(onBack: () -> Unit, onOpenPermissions: () -> Unit, vm: Settin
                         val ok = tick >= 0 && PermissionHelper.isGranted(context, type)
                         Row(Modifier.fillMaxWidth().padding(vertical = 6.dp), verticalAlignment = Alignment.CenterVertically) {
                             Text(type.title, Modifier.weight(1f), style = MaterialTheme.typography.bodyLarge)
-                            if (ok) Text("Allowed", color = TextMuted) else GhostButton("Fix", onClick = onOpenPermissions)
+                            if (ok) Text("Allowed", color = TextMuted)
+                            else GhostButton("Fix", onClick = {
+                                if (type == PermissionType.BATTERY) PermissionHelper.openBatterySettings(context)
+                                else onOpenPermissions()
+                            })
                         }
                     }
                 }

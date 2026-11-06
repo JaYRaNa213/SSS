@@ -4,8 +4,12 @@ import android.content.Context
 import android.graphics.BitmapFactory
 import android.net.Uri
 import android.os.Build
+import android.provider.MediaStore
 import android.util.DisplayMetrics
 import android.view.WindowManager
+import java.io.File
+import java.io.FileInputStream
+import java.io.InputStream
 import kotlin.math.max
 import kotlin.math.roundToInt
 import kotlin.math.sqrt
@@ -30,10 +34,49 @@ object AutoCropper {
         null
     }
 
-    private fun analyzeInternal(context: Context, uri: Uri): Result? {
+    private fun openInputStreamForUri(context: Context, uri: Uri): InputStream? {
+        val path = uri.toString()
         val resolver = context.contentResolver
+
+        if (path.startsWith("content://")) {
+            runCatching { resolver.openInputStream(uri) }.getOrNull()?.let { return it }
+            runCatching { resolver.openFileDescriptor(uri, "r")?.fileDescriptor }
+                .getOrNull()?.let { fd -> runCatching { FileInputStream(fd) }.getOrNull() }?.let { return it }
+            runCatching { resolver.openAssetFileDescriptor(uri, "r")?.createInputStream() }
+                .getOrNull()?.let { return it }
+            runCatching {
+                var filePath: String? = null
+                resolver.query(uri, arrayOf(MediaStore.Images.Media.DATA), null, null, null)?.use { c ->
+                    if (c.moveToFirst()) {
+                        val idx = c.getColumnIndex(MediaStore.Images.Media.DATA)
+                        if (idx >= 0) filePath = c.getString(idx)
+                    }
+                }
+                filePath?.let { p ->
+                    val f = File(p)
+                    if (f.exists()) f.inputStream() else null
+                }
+            }.getOrNull()?.let { return it }
+        }
+
+        val cleanPath = when {
+            path.startsWith("file://") -> uri.path ?: path.removePrefix("file://")
+            else -> path
+        }
+        val file = File(cleanPath)
+        if (file.exists()) {
+            runCatching { file.inputStream() }.getOrNull()?.let { return it }
+        }
+
+        return runCatching { resolver.openInputStream(uri) }.getOrNull()
+    }
+
+    private fun analyzeInternal(context: Context, uri: Uri): Result? {
+        val bytes = openInputStreamForUri(context, uri)?.use { it.readBytes() } ?: return null
+        if (bytes.isEmpty()) return null
+
         val bounds = BitmapFactory.Options().apply { inJustDecodeBounds = true }
-        resolver.openInputStream(uri)?.use { BitmapFactory.decodeStream(it, null, bounds) } ?: return null
+        BitmapFactory.decodeByteArray(bytes, 0, bytes.size, bounds)
         val ow = bounds.outWidth
         val oh = bounds.outHeight
         if (ow <= 0 || oh <= 0) return null
@@ -41,7 +84,7 @@ object AutoCropper {
         var sample = 1
         while (ow / (sample * 2) >= TARGET_W) sample *= 2
         val opts = BitmapFactory.Options().apply { inSampleSize = sample }
-        val bmp = resolver.openInputStream(uri)?.use { BitmapFactory.decodeStream(it, null, opts) } ?: return null
+        val bmp = BitmapFactory.decodeByteArray(bytes, 0, bytes.size, opts) ?: return null
         try {
             val w = bmp.width
             val h = bmp.height
