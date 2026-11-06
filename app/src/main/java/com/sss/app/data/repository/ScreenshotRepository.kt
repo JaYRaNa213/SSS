@@ -79,4 +79,13 @@ class ScreenshotRepository(
     suspend fun getScreenshotCount(folderId: Long): Int {
         return screenshotDao.getScreenshotCount(folderId)
     }
+
+    suspend fun insertAll(list: List<ScreenshotEntity>) = screenshotDao.insertAll(list)
+
+    /** Moves screenshots between folders; sequence numbers continue after the target's max. */
+    suspend fun moveScreenshots(items: List<ScreenshotEntity>, targetFolderId: Long) =
+        insertMutex.withLock {
+            var seq = screenshotDao.getMaxSequence(targetFolderId)
+            items.sortedBy { it.capturedAt }.forEach { screenshotDao.moveOne(it.id, targetFolderId, ++seq) }
+        }
 }

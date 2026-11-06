@@ -6,8 +6,12 @@ import com.sss.app.data.local.FolderEntity
 import com.sss.app.data.local.FolderWithCount
 import com.sss.app.data.repository.AllScreenshotsRepository
 import com.sss.app.data.repository.FolderRepository
+import com.sss.app.data.repository.FolderResult
 import com.sss.app.data.repository.ScreenshotRepository
 import com.sss.app.data.repository.SessionRepository
+import com.sss.app.data.settings.AppSettings
+import com.sss.app.data.settings.SettingsKeys
+import com.sss.app.data.settings.SettingsRepository
 import dagger.hilt.android.lifecycle.HiltViewModel
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
@@ -20,19 +24,23 @@ class HomeViewModel @Inject constructor(
     private val repository: FolderRepository,
     private val screenshotRepository: ScreenshotRepository,
     private val allScreenshotsRepository: AllScreenshotsRepository,
-    private val sessionRepository: SessionRepository
+    private val sessionRepository: SessionRepository,
+    private val settingsRepository: SettingsRepository
 ) : ViewModel() {
 
     val foldersWithCount: StateFlow<List<FolderWithCount>> =
-        repository.foldersWithCount.stateIn(
-            scope = viewModelScope,
-            started = SharingStarted.WhileSubscribed(5_000),
-            initialValue = emptyList()
-        )
+        repository.foldersWithCount.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
 
-    fun addFolder(name: String) {
+    val settings: StateFlow<AppSettings> =
+        settingsRepository.settings.stateIn(viewModelScope, SharingStarted.Eagerly, AppSettings())
+
+    fun createFolder(raw: String, onResult: (FolderResult) -> Unit) {
+        viewModelScope.launch { onResult(repository.createFolder(raw)) }
+    }
+
+    fun togglePause() {
         viewModelScope.launch {
-            repository.addFolder(name)
+            settingsRepository.set(SettingsKeys.CAPTURE_PAUSED, !settings.value.capturePaused)
         }
     }
 
@@ -42,15 +50,11 @@ class HomeViewModel @Inject constructor(
             if (active != null && active.isActive && active.folderId == folder.id) {
                 sessionRepository.stopSession()
             }
-
             try {
-                val folderShots = screenshotRepository.getScreenshotsByFolderList(folder.id)
-                val paths = folderShots.map { it.filePath }
-                if (paths.isNotEmpty()) {
-                    allScreenshotsRepository.hide(paths)
-                }
+                val paths = screenshotRepository.getScreenshotsByFolderList(folder.id).map { it.filePath }
+                if (paths.isNotEmpty()) allScreenshotsRepository.hide(paths)
             } catch (e: Exception) {
-                // Ignore errors
+                // ignore
             }
             repository.deleteFolder(folder)
         }

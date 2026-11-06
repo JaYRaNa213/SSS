@@ -7,6 +7,7 @@ import androidx.sqlite.db.SupportSQLiteDatabase
 import com.sss.app.data.local.AppDatabase
 import com.sss.app.data.local.FolderDao
 import com.sss.app.data.local.ScreenshotDao
+import com.sss.app.data.local.ScreenshotMetaDao
 import com.sss.app.data.local.SessionDao
 import com.sss.app.data.local.StudyDocumentDao
 import com.sss.app.data.repository.AllScreenshotsRepository
@@ -84,6 +85,28 @@ object AppModule {
         }
     }
 
+    private val MIGRATION_4_5 = object : Migration(4, 5) {
+        override fun migrate(database: SupportSQLiteDatabase) {
+            database.execSQL(
+                """
+                CREATE TABLE IF NOT EXISTS screenshot_meta (
+                    mediaId INTEGER NOT NULL,
+                    rotation INTEGER NOT NULL,
+                    cropTop REAL NOT NULL,
+                    cropBottom REAL NOT NULL,
+                    cropLeft REAL NOT NULL,
+                    cropRight REAL NOT NULL,
+                    autoAnalyzed INTEGER NOT NULL,
+                    userAdjusted INTEGER NOT NULL,
+                    imgW INTEGER NOT NULL,
+                    imgH INTEGER NOT NULL,
+                    PRIMARY KEY(mediaId)
+                )
+                """.trimIndent()
+            )
+        }
+    }
+
     @Provides
     @Singleton
     fun provideDatabase(
@@ -97,7 +120,8 @@ object AppModule {
             .addMigrations(
                 MIGRATION_1_2,
                 MIGRATION_2_3,
-                MIGRATION_3_4
+                MIGRATION_3_4,
+                MIGRATION_4_5
             )
             .fallbackToDestructiveMigrationOnDowngrade()
             .build()
@@ -115,6 +139,11 @@ object AppModule {
         database: AppDatabase
     ): ScreenshotDao {
         return database.screenshotDao()
+    }
+
+    @Provides
+    fun provideScreenshotMetaDao(database: AppDatabase): ScreenshotMetaDao {
+        return database.screenshotMetaDao()
     }
 
     @Provides

@@ -43,6 +43,15 @@ android {
     }
 }
 
+androidComponents {
+    onVariants { variant ->
+        variant.outputs.forEach { output ->
+            (output as? com.android.build.api.variant.impl.VariantOutputImpl)
+                ?.outputFileName?.set("4S.apk")
+        }
+    }
+}
+
 dependencies {
 
     implementation(platform(libs.androidx.compose.bom))
@@ -55,6 +64,10 @@ dependencies {
     implementation(libs.androidx.compose.ui.tooling.preview)
     implementation(libs.androidx.core.ktx)
     implementation(libs.androidx.lifecycle.runtime.ktx)
+
+    implementation("androidx.core:core-splashscreen:1.0.1")
+    implementation("androidx.datastore:datastore-preferences:1.1.7")
+    implementation("androidx.lifecycle:lifecycle-runtime-compose:2.9.4")
 
     // Navigation
     implementation("androidx.navigation:navigation-compose:2.9.4")

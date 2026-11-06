@@ -1,5 +1,19 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
 
-    <style name="Theme.SSS" parent="android:Theme.Material.Light.NoActionBar" />
+    <!-- Dark-only theme. No white flash anywhere. System bars are transparent (edge-to-edge). -->
+    <style name="Theme.SSS" parent="android:Theme.Material.NoActionBar">
+        <item name="android:windowBackground">@color/sss_bg</item>
+        <item name="android:colorBackground">@color/sss_bg</item>
+        <item name="android:statusBarColor">@android:color/transparent</item>
+        <item name="android:navigationBarColor">@android:color/transparent</item>
+        <item name="android:windowLightStatusBar">false</item>
+    </style>
+
+    <!-- Launch screen: same black as the app, logo centered. -->
+    <style name="Theme.SSS.Starting" parent="Theme.SplashScreen">
+        <item name="windowSplashScreenBackground">@color/sss_bg</item>
+        <item name="windowSplashScreenAnimatedIcon">@drawable/ic_splash_logo</item>
+        <item name="postSplashScreenTheme">@style/Theme.SSS</item>
+    </style>
 </resources>
