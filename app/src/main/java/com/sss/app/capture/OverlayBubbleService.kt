@@ -104,6 +104,7 @@ class OverlayBubbleService : Service(), LifecycleOwner, SavedStateRegistryOwner 
     private var badgeJob: Job? = null
     private var lastFolderId: Long? = null
     private var lastBadge: Pair<Long?, Int>? = null
+    private var activeName: String? = null
 
     private val idleRunnable = Runnable {
         bubbleView?.animate()?.alpha(settings.bubbleOpacity.coerceIn(0.2f, 1f))?.setDuration(400)?.start()
@@ -178,7 +179,7 @@ class OverlayBubbleService : Service(), LifecycleOwner, SavedStateRegistryOwner 
         val open = PendingIntent.getActivity(this, 0, Intent(this, MainActivity::class.java), flags)
         return NotificationCompat.Builder(this, CHANNEL_ID)
             .setSmallIcon(R.drawable.ic_stat_4s)
-            .setColor(0xFFC8F135.toInt())
+            .setColor(0xFFFEC84A.toInt())
             .setContentTitle(if (paused) "4S is paused" else "4S is capturing")
             .setContentText(folderName?.let { "Saving to $it" } ?: "New screenshots go to your selected folder")
             .setContentIntent(open)
@@ -224,10 +225,11 @@ class OverlayBubbleService : Service(), LifecycleOwner, SavedStateRegistryOwner 
                     if (session != null && session.isActive) {
                         bubbleView?.paused = paused
                         val name = folderRepository.getFoldersOnce().firstOrNull { it.id == session.folderId }?.name
+                        activeName = name
                         updateNotification(name, paused)
                         if (paused) screenshotObserver.stop() else screenshotObserver.start()   // start() is idempotent
                         val prev = lastFolderId
-                        if (prev != null && prev != session.folderId && name != null) showFolderLabel(name)
+                        if (prev != null && prev != session.folderId && name != null) showFolderLabel("Now saving to $name")
                         lastFolderId = session.folderId
                     } else {
                         screenshotObserver.stop()
@@ -257,6 +259,7 @@ class OverlayBubbleService : Service(), LifecycleOwner, SavedStateRegistryOwner 
                         if (prev != null && prev.first == cur.first && cur.second > prev.second) {
                             bubbleView?.pulse()
                             resetIdleTimer()
+                            activeName?.let { showFolderLabel("Saved to $it") }
                             if (settings.haptic) bubbleView?.performHapticFeedback(HapticFeedbackConstants.CLOCK_TICK)
                         }
                     }
@@ -465,35 +468,32 @@ class OverlayBubbleService : Service(), LifecycleOwner, SavedStateRegistryOwner 
         labelView = null
     }
 
-    private fun showFolderLabel(name: String) {
-        val bp = bubbleParams ?: return
+    private fun showFolderLabel(message: String) {
         if (bubbleView == null) return
         removeLabel()
-        val size = bubbleSizePx()
-        val sw = resources.displayMetrics.widthPixels
-        val left = bp.x + size / 2 < sw / 2
         val tv = TextView(this).apply {
-            text = name
+            text = "\u2713  $message"
             maxLines = 1
-            textSize = 12f
+            textSize = 13f
             typeface = Typeface.DEFAULT_BOLD
-            setTextColor(0xFF0B0B0D.toInt())
-            setPadding(dp(10), dp(6), dp(10), dp(6))
-            background = GradientDrawable().apply { setColor(0xFFECECEE.toInt()); cornerRadius = dp(10).toFloat() }
+            setTextColor(0xFFF5F5F6.toInt())
+            setPadding(dp(16), dp(10), dp(16), dp(10))
+            background = GradientDrawable().apply {
+                setColor(0xF2131316.toInt()); cornerRadius = dp(22).toFloat(); setStroke(dp(1), 0xFF2C2C32.toInt())
+            }
         }
         val lp = WindowManager.LayoutParams(
             WindowManager.LayoutParams.WRAP_CONTENT, WindowManager.LayoutParams.WRAP_CONTENT, overlayType(),
             WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE or WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN,
             PixelFormat.TRANSLUCENT
         ).apply {
-            gravity = Gravity.TOP or (if (left) Gravity.START else Gravity.END)
-            x = if (left) bp.x + size + dp(8) else (sw - bp.x) + dp(8)
-            y = bp.y + (size - dp(28)) / 2
+            gravity = Gravity.BOTTOM or Gravity.CENTER_HORIZONTAL
+            y = dp(96)
         }
         try {
             labelView = tv
             windowManager?.addView(tv, lp)
-            mainHandler.postDelayed(removeLabelRunnable, 1500)
+            mainHandler.postDelayed(removeLabelRunnable, 1800)
         } catch (e: Exception) {
             labelView = null
         }

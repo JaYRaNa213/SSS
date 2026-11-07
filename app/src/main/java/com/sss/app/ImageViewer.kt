@@ -11,6 +11,7 @@ import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.gestures.awaitEachGesture
 import androidx.compose.foundation.gestures.awaitFirstDown
@@ -22,6 +23,7 @@ import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.defaultMinSize
@@ -32,8 +34,13 @@ import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.statusBarsPadding
+import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.lazy.LazyRow
+import androidx.compose.foundation.lazy.itemsIndexed
+import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.pager.HorizontalPager
 import androidx.compose.foundation.pager.rememberPagerState
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
@@ -41,7 +48,7 @@ import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.MoreVert
 import androidx.compose.material.icons.filled.RotateRight
 import androidx.compose.material.icons.filled.Share
-import androidx.compose.material.icons.filled.TextFields
+import androidx.compose.material.icons.outlined.DocumentScanner
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
@@ -67,6 +74,7 @@ import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableStateListOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -79,15 +87,19 @@ import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.input.pointer.positionChanged
+import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalView
+import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
-import androidx.compose.ui.unit.dp
 import androidx.core.view.WindowCompat
 import androidx.core.view.WindowInsetsCompat
 import androidx.core.view.WindowInsetsControllerCompat
 import androidx.hilt.navigation.compose.hiltViewModel
+import coil3.compose.AsyncImage
 import com.sss.app.data.local.ScreenshotEntity
 import com.sss.app.data.local.ScreenshotMetaEntity
 import com.sss.app.data.settings.AppSettings
@@ -98,17 +110,24 @@ import com.sss.app.ui.folder.FolderViewModel
 import com.sss.app.ui.folder.sortedFor
 import com.sss.app.ui.ocr.OcrStatus
 import com.sss.app.ui.ocr.OcrViewModel
+import com.sss.app.ui.theme.Accent
+import com.sss.app.ui.theme.AccentOn
 import com.sss.app.ui.theme.Bg
 import com.sss.app.ui.theme.Danger
 import com.sss.app.ui.theme.GhostButton
+import com.sss.app.ui.theme.Line
 import com.sss.app.ui.theme.MonoLabel
+import com.sss.app.ui.theme.RoundIconButton
 import com.sss.app.ui.theme.SssPrimaryButton
+import com.sss.app.ui.theme.Surface1
+import com.sss.app.ui.theme.Surface2
 import com.sss.app.ui.theme.TextMuted
 import com.sss.app.ui.theme.TextPrimary
 import com.sss.app.util.MediaDelete
 import com.sss.app.util.MediaIds
 import com.sss.app.util.findActivity
 import com.sss.app.util.toImageModel
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.withTimeoutOrNull
 
 // ================================================================
@@ -311,7 +330,7 @@ fun ImageViewerScreen(
                 viewModel.saveCrop(shot.filePath, t, b, l, r, if (all) sorted.map { it.filePath } else null)
             }
         )
-        SnackbarHost(snackbar, Modifier.align(Alignment.BottomCenter).navigationBarsPadding().padding(bottom = 88.dp))
+        SnackbarHost(snackbar, Modifier.align(Alignment.BottomCenter).navigationBarsPadding().padding(bottom = 160.dp))
     }
 
     pendingOtherDelete?.let { shot ->
@@ -398,23 +417,23 @@ private fun ViewerPager(
         }
     }
 
-    // top bar
+    // ---- top chrome: round buttons + counter pill
     AnimatedVisibility(visible = chrome, enter = fadeIn(), exit = fadeOut()) {
-        Box(Modifier.fillMaxWidth().background(Brush.verticalGradient(listOf(Color.Black.copy(alpha = 0.7f), Color.Transparent)))) {
-            Row(Modifier.fillMaxWidth().statusBarsPadding().padding(horizontal = 4.dp, vertical = 4.dp), verticalAlignment = Alignment.CenterVertically) {
-                IconButton(onClick = onBack) { Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Back", tint = TextPrimary) }
+        Box(Modifier.fillMaxWidth().background(Brush.verticalGradient(listOf(Color.Black.copy(alpha = 0.6f), Color.Transparent)))) {
+            Row(Modifier.fillMaxWidth().statusBarsPadding().padding(horizontal = 12.dp, vertical = 8.dp), verticalAlignment = Alignment.CenterVertically) {
+                RoundIconButton(Icons.AutoMirrored.Filled.ArrowBack, "Back", onBack, container = Color.Black.copy(alpha = 0.5f))
                 Spacer(Modifier.weight(1f))
-                MonoLabel("${pagerState.currentPage + 1} / ${sorted.size}", color = TextPrimary)
+                Text(
+                    "${pagerState.currentPage + 1} / ${sorted.size}", fontWeight = FontWeight.SemiBold,
+                    modifier = Modifier.clip(CircleShape).background(Color.Black.copy(alpha = 0.5f)).padding(horizontal = 14.dp, vertical = 8.dp)
+                )
                 Spacer(Modifier.weight(1f))
                 Box {
-                    IconButton(onClick = { menuOpen = true }) { Icon(Icons.Default.MoreVert, contentDescription = "More", tint = TextPrimary) }
+                    RoundIconButton(Icons.Default.MoreVert, "More", { menuOpen = true }, container = Color.Black.copy(alpha = 0.5f))
                     DropdownMenu(expanded = menuOpen, onDismissRequest = { menuOpen = false }) {
                         DropdownMenuItem(
                             text = { Text(if (currentOriginal) "Show cropped" else "Show original") },
-                            onClick = {
-                                menuOpen = false
-                                current?.let { if (it.id in showOriginal) showOriginal.remove(it.id) else showOriginal.add(it.id) }
-                            }
+                            onClick = { menuOpen = false; current?.let { if (it.id in showOriginal) showOriginal.remove(it.id) else showOriginal.add(it.id) } }
                         )
                         DropdownMenuItem(
                             text = { Text("Adjust crop") },
@@ -427,14 +446,40 @@ private fun ViewerPager(
         }
     }
 
-    // bottom bar
+    // ---- bottom chrome: filmstrip + floating action pill
+    val filmState = rememberLazyListState()
+    val viewerScope = rememberCoroutineScope()
+    LaunchedEffect(pagerState.currentPage) { filmState.animateScrollToItem((pagerState.currentPage - 2).coerceAtLeast(0)) }
     Box(Modifier.fillMaxSize()) {
         AnimatedVisibility(visible = chrome, enter = fadeIn(), exit = fadeOut(), modifier = Modifier.align(Alignment.BottomCenter)) {
-            Box(Modifier.fillMaxWidth().background(Brush.verticalGradient(listOf(Color.Transparent, Color.Black.copy(alpha = 0.75f))))) {
-                Row(Modifier.fillMaxWidth().navigationBarsPadding().padding(vertical = 8.dp), horizontalArrangement = Arrangement.SpaceEvenly) {
-                    ViewerAction(Icons.Default.RotateRight, "Rotate") { current?.let { onRotate(it, currentRotation) } }
+            Column(Modifier.fillMaxWidth().navigationBarsPadding().padding(bottom = 12.dp), horizontalAlignment = Alignment.CenterHorizontally) {
+                LazyRow(state = filmState, contentPadding = PaddingValues(horizontal = 16.dp), horizontalArrangement = Arrangement.spacedBy(6.dp), modifier = Modifier.height(60.dp)) {
+                    itemsIndexed(sorted, key = { _, s -> s.id }) { i, s ->
+                        val cur = i == pagerState.currentPage
+                        AsyncImage(
+                            model = s.filePath.toImageModel(), contentDescription = null, contentScale = ContentScale.Crop,
+                            modifier = Modifier.padding(vertical = if (cur) 0.dp else 6.dp).size(width = 44.dp, height = if (cur) 60.dp else 48.dp)
+                                .clip(RoundedCornerShape(9.dp)).background(Surface2)
+                                .then(if (cur) Modifier.border(2.dp, Accent, RoundedCornerShape(9.dp)) else Modifier)
+                                .clickable { viewerScope.launch { pagerState.animateScrollToPage(i) } }
+                        )
+                    }
+                }
+                Spacer(Modifier.height(10.dp))
+                Row(
+                    Modifier.clip(RoundedCornerShape(32.dp)).background(Surface1.copy(alpha = 0.94f)).border(1.dp, Line, RoundedCornerShape(32.dp)).padding(8.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
                     ViewerAction(Icons.Default.Share, "Share") { current?.let(onShare) }
-                    ViewerAction(Icons.Default.TextFields, "Text") { current?.let(onOcr) }
+                    Row(
+                        Modifier.clip(CircleShape).background(Accent).clickable { current?.let(onOcr) }.padding(horizontal = 20.dp, vertical = 10.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Icon(Icons.Outlined.DocumentScanner, "Extract", tint = AccentOn, modifier = Modifier.size(20.dp))
+                        Spacer(Modifier.width(8.dp))
+                        Text("Extract", color = AccentOn, fontWeight = FontWeight.Bold)
+                    }
+                    ViewerAction(Icons.Default.RotateRight, "Rotate") { current?.let { onRotate(it, currentRotation) } }
                     ViewerAction(Icons.Default.Delete, "Delete", danger = true) { current?.let(onDelete) }
                 }
             }
@@ -454,11 +499,11 @@ private fun ViewerPager(
 private fun ViewerAction(icon: ImageVector, label: String, danger: Boolean = false, onClick: () -> Unit) {
     val c = if (danger) Danger else TextPrimary
     Column(
-        Modifier.clip(RoundedCornerShape(12.dp)).clickable(onClick = onClick).defaultMinSize(minWidth = 64.dp, minHeight = 48.dp).padding(8.dp),
-        horizontalAlignment = Alignment.CenterHorizontally
+        Modifier.clip(RoundedCornerShape(20.dp)).clickable(onClick = onClick).defaultMinSize(minWidth = 60.dp, minHeight = 48.dp).padding(horizontal = 10.dp, vertical = 6.dp),
+        horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.Center
     ) {
-        Icon(icon, contentDescription = label, tint = c, modifier = Modifier.size(24.dp))
-        Text(label, color = c, style = MaterialTheme.typography.labelMedium)
+        Icon(icon, label, tint = c, modifier = Modifier.size(22.dp))
+        Text(label, color = c, fontSize = 11.sp, fontWeight = FontWeight.Medium)
     }
 }
 

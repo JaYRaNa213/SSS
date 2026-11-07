@@ -23,9 +23,9 @@ object DateLabels {
         if (ms == null) return "empty"
         val d = day(ms)
         return when (val label = dayLabel(d)) {
-            "Today" -> "today " + Instant.ofEpochMilli(ms).atZone(ZoneId.systemDefault())
+            "Today" -> "Today " + Instant.ofEpochMilli(ms).atZone(ZoneId.systemDefault())
                 .format(DateTimeFormatter.ofPattern("H:mm"))
-            "Yesterday" -> "yesterday"
+            "Yesterday" -> "Yesterday"
             else -> label
         }
     }

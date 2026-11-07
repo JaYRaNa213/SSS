@@ -6,17 +6,18 @@ import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.statusBars
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.material3.FilterChip
 import androidx.compose.material3.FilterChipDefaults
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Slider
-import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
@@ -37,15 +38,15 @@ import com.sss.app.data.settings.SettingsKeys
 import com.sss.app.data.settings.SortOrder
 import com.sss.app.ui.permissions.PermissionHelper
 import com.sss.app.ui.permissions.PermissionType
-import com.sss.app.ui.theme.GhostButton
-import com.sss.app.ui.theme.MonoLabel
-import com.sss.app.ui.theme.Surface3
-import com.sss.app.ui.theme.SssTopBar
-import com.sss.app.ui.theme.TextMuted
-import com.sss.app.ui.theme.TextPrimary
+import com.sss.app.ui.theme.*
 
 @Composable
-fun SettingsScreen(onBack: () -> Unit, onOpenPermissions: () -> Unit, vm: SettingsViewModel = hiltViewModel()) {
+fun SettingsScreen(
+    onBack: () -> Unit,
+    onOpenPermissions: () -> Unit,
+    onOpenHelp: () -> Unit,
+    vm: SettingsViewModel = hiltViewModel()
+) {
     val context = LocalContext.current
     val s by vm.settings.collectAsState()
 
@@ -60,9 +61,9 @@ fun SettingsScreen(onBack: () -> Unit, onOpenPermissions: () -> Unit, vm: Settin
     @Suppress("DEPRECATION")
     val version = runCatching { context.packageManager.getPackageInfo(context.packageName, 0).versionName }.getOrNull() ?: "-"
 
-    Scaffold(containerColor = MaterialTheme.colorScheme.background) { inner ->
+    Scaffold(containerColor = Bg, contentWindowInsets = WindowInsets.statusBars) { inner ->
         Column(Modifier.fillMaxSize().padding(inner)) {
-            SssTopBar(title = "Settings", onBack = onBack)
+            SssTopBar(title = "Settings")
             LazyColumn(Modifier.padding(horizontal = 20.dp)) {
                 item { Section("Bubble") }
                 item {
@@ -108,11 +109,12 @@ fun SettingsScreen(onBack: () -> Unit, onOpenPermissions: () -> Unit, vm: Settin
                 item { Section("About") }
                 item {
                     Text("4S version $version", color = TextMuted, style = MaterialTheme.typography.bodyMedium)
+                    Spacer(Modifier.height(12.dp))
+                    GhostButton("How 4S works", onClick = onOpenHelp, modifier = Modifier.fillMaxWidth())
                     Spacer(Modifier.height(8.dp))
-                    // TODO owner: replace with the real privacy policy URL before the Play release
                     GhostButton("Privacy policy", onClick = {
                         context.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse("https://example.com/privacy")).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
-                    })
+                    }, modifier = Modifier.fillMaxWidth())
                     Spacer(Modifier.height(32.dp))
                 }
             }
@@ -132,7 +134,7 @@ private fun Toggle(label: String, checked: Boolean, hint: String? = null, onChan
             Text(label, style = MaterialTheme.typography.bodyLarge)
             if (hint != null) Text(hint, style = MaterialTheme.typography.bodySmall, color = TextMuted)
         }
-        Switch(checked = checked, onCheckedChange = onChange)
+        SssSwitch(checked, onChange)
     }
 }
 
@@ -145,7 +147,7 @@ private fun Choice(label: String, options: List<String>, selected: Int, onSelect
             options.forEachIndexed { i, t ->
                 FilterChip(
                     selected = i == selected, onClick = { onSelect(i) }, label = { Text(t) },
-                    colors = FilterChipDefaults.filterChipColors(selectedContainerColor = Surface3, selectedLabelColor = TextPrimary)
+                    colors = FilterChipDefaults.filterChipColors(selectedContainerColor = AccentSoft, selectedLabelColor = Accent)
                 )
             }
         }

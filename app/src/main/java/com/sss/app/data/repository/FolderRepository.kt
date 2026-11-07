@@ -26,10 +26,10 @@ class FolderRepository(
     suspend fun addFolder(name: String): Long = folderDao.insertFolder(FolderEntity(name = name))
 
     /** Validates (empty / length / reserved / duplicate) and creates. */
-    suspend fun createFolder(raw: String): FolderResult =
+    suspend fun createFolder(raw: String, colorIndex: Int = 0): FolderResult =
         when (val c = FolderNameValidator.check(raw, folderDao.getFoldersOnce())) {
             is NameCheck.Error -> FolderResult.Invalid(c.message)
-            is NameCheck.Ok -> FolderResult.Success(folderDao.insertFolder(FolderEntity(name = c.name)), c.name)
+            is NameCheck.Ok -> FolderResult.Success(folderDao.insertFolder(FolderEntity(name = c.name, colorIndex = colorIndex)), c.name)
         }
 
     suspend fun renameFolder(id: Long, raw: String): FolderResult =
