@@ -8,13 +8,14 @@ import android.graphics.Typeface
 import android.view.View
 import kotlin.math.min
 
-private const val LIME = 0xFFC8F135.toInt()
-private const val LINE = 0xFF2A2A2F.toInt()
-private const val SURFACE = 0xF2111114.toInt()
-private const val TEXT = 0xFFECECEE.toInt()
-private const val BG = 0xFF0B0B0D.toInt()
+private const val ACCENT = 0xFFFEC84A.toInt()
+private const val ACCENT_ON = 0xFF1A1405.toInt()
+private const val LINE = 0xFF2C2C32.toInt()
+private const val SURFACE = 0xFF232328.toInt()
+private const val TEXT = 0xFFF5F5F6.toInt()
+private const val BG = 0xFF0A0A0B.toInt()
 
-/** Round Graphite bubble: "4S", lime ring while capturing, pause icon when paused, count badge top-right. */
+/** Solid yellow "4S" circle with a soft outer ring. Grey with pause bars when paused. */
 class AssistiveBubbleView(context: Context) : View(context) {
 
     private val d = context.resources.displayMetrics.density
@@ -25,14 +26,14 @@ class AssistiveBubbleView(context: Context) : View(context) {
     var paused: Boolean = false
         set(v) { field = v; invalidate() }
 
-    private val fill = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = SURFACE; style = Paint.Style.FILL }
-    private val ring = Paint(Paint.ANTI_ALIAS_FLAG).apply { style = Paint.Style.STROKE; strokeWidth = 1.5f * d }
+    private val fill = Paint(Paint.ANTI_ALIAS_FLAG).apply { style = Paint.Style.FILL }
+    private val ring = Paint(Paint.ANTI_ALIAS_FLAG).apply { style = Paint.Style.STROKE; strokeWidth = 3f * d }
     private val text = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-        color = TEXT; textSize = 13f * d; typeface = Typeface.create(Typeface.DEFAULT, Typeface.BOLD); textAlign = Paint.Align.CENTER
+        textSize = 14f * d; typeface = Typeface.create(Typeface.DEFAULT, Typeface.BOLD); textAlign = Paint.Align.CENTER
     }
-    private val badge = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = LIME; style = Paint.Style.FILL }
+    private val badge = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = BG; style = Paint.Style.FILL }
     private val badgeText = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-        color = BG; typeface = Typeface.create(Typeface.DEFAULT, Typeface.BOLD); textAlign = Paint.Align.CENTER
+        color = ACCENT; typeface = Typeface.create(Typeface.DEFAULT, Typeface.BOLD); textAlign = Paint.Align.CENTER
     }
     private val bar = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = TEXT; style = Paint.Style.FILL }
 
@@ -47,10 +48,11 @@ class AssistiveBubbleView(context: Context) : View(context) {
         super.onDraw(canvas)
         val cx = width / 2f
         val cy = height / 2f
-        val r = min(width, height) / 2f - 2f * d
+        val r = min(width, height) / 2f - 4f * d
+        fill.color = if (paused) SURFACE else ACCENT
         canvas.drawCircle(cx, cy, r, fill)
-        ring.color = if (paused) LINE else LIME
-        canvas.drawCircle(cx, cy, r, ring)
+        ring.color = if (paused) LINE else (ACCENT and 0x00FFFFFF) or 0x66000000
+        canvas.drawCircle(cx, cy, r + 2f * d, ring)
 
         if (paused) {
             val bw = 3.5f * d
@@ -58,6 +60,7 @@ class AssistiveBubbleView(context: Context) : View(context) {
             canvas.drawRoundRect(cx - bw * 1.7f, cy - bh / 2, cx - bw * 0.7f, cy + bh / 2, d, d, bar)
             canvas.drawRoundRect(cx + bw * 0.7f, cy - bh / 2, cx + bw * 1.7f, cy + bh / 2, d, d, bar)
         } else {
+            text.color = ACCENT_ON
             val fm = text.fontMetrics
             canvas.drawText("4S", cx, cy - (fm.descent + fm.ascent) / 2f, text)
         }

@@ -12,6 +12,7 @@ data class FolderWithCount(
     @Embedded val folder: FolderEntity,
     val screenshotCount: Int,
     val latestScreenshotPath: String?,
+    val secondScreenshotPath: String?,
     val lastUpdatedAt: Long?
 )
 
@@ -33,8 +34,10 @@ interface FolderDao {
             f.id AS id,
             f.name AS name,
             f.createdAt AS createdAt,
+            f.colorIndex AS colorIndex,
             COUNT(s.id) AS screenshotCount,
             (SELECT filePath FROM screenshots WHERE folderId = f.id ORDER BY capturedAt DESC, id DESC LIMIT 1) AS latestScreenshotPath,
+            (SELECT filePath FROM screenshots WHERE folderId = f.id ORDER BY capturedAt DESC, id DESC LIMIT 1 OFFSET 1) AS secondScreenshotPath,
             MAX(s.capturedAt) AS lastUpdatedAt
         FROM folders f
         LEFT JOIN screenshots s ON f.id = s.folderId

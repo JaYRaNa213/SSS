@@ -29,7 +29,6 @@ import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
-import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
@@ -42,17 +41,7 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
 import androidx.hilt.navigation.compose.hiltViewModel
 import com.sss.app.ui.common.CroppedImage
-import com.sss.app.ui.theme.Bg
-import com.sss.app.ui.theme.GhostButton
-import com.sss.app.ui.theme.Line
-import com.sss.app.ui.theme.MonoLabel
-import com.sss.app.ui.theme.Surface1
-import com.sss.app.ui.theme.Surface2
-import com.sss.app.ui.theme.Surface3
-import com.sss.app.ui.theme.SssPrimaryButton
-import com.sss.app.ui.theme.SssTopBar
-import com.sss.app.ui.theme.TextMuted
-import com.sss.app.ui.theme.TextPrimary
+import com.sss.app.ui.theme.*
 import com.sss.app.util.MediaIds
 import com.sss.app.util.toImageModel
 import java.util.Locale
@@ -116,8 +105,8 @@ fun PdfFlowScreen(onBack: () -> Unit, vm: PdfViewModel = hiltViewModel()) {
                                         model = shot.filePath.toImageModel(), meta = metaMap[MediaIds.fromPath(shot.filePath)],
                                         cropEnabled = vm.options.useCrop, fit = true, modifier = Modifier.fillMaxSize()
                                     )
-                                    Box(Modifier.align(Alignment.TopStart).padding(6.dp).clip(CircleShape).background(TextPrimary).padding(horizontal = 7.dp, vertical = 2.dp)) {
-                                        Text("${i + 1}", color = Bg, style = MaterialTheme.typography.labelMedium)
+                                    Box(Modifier.align(Alignment.TopStart).padding(6.dp).clip(CircleShape).background(Accent).padding(horizontal = 7.dp, vertical = 2.dp)) {
+                                        Text("${i + 1}", color = AccentOn, style = MaterialTheme.typography.labelMedium)
                                     }
                                 }
                                 Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
@@ -150,7 +139,7 @@ fun PdfFlowScreen(onBack: () -> Unit, vm: PdfViewModel = hiltViewModel()) {
                 Column {
                     Text("Creating page ${run.done} of ${run.total}")
                     Spacer(Modifier.height(12.dp))
-                    LinearProgressIndicator(progress = { if (run.total == 0) 0f else run.done.toFloat() / run.total }, modifier = Modifier.fillMaxWidth())
+                    LinearProgressIndicator(progress = { if (run.total == 0) 0f else run.done.toFloat() / run.total }, modifier = Modifier.fillMaxWidth(), color = Accent, trackColor = Surface3)
                 }
             },
             confirmButton = {},
@@ -214,7 +203,7 @@ private fun OptionRow(label: String, options: List<String>, selected: Int, onSel
             options.forEachIndexed { i, text ->
                 FilterChip(
                     selected = i == selected, onClick = { onSelect(i) }, label = { Text(text) },
-                    colors = FilterChipDefaults.filterChipColors(selectedContainerColor = Surface3, selectedLabelColor = TextPrimary)
+                    colors = FilterChipDefaults.filterChipColors(selectedContainerColor = AccentSoft, selectedLabelColor = Accent)
                 )
             }
         }
@@ -225,6 +214,6 @@ private fun OptionRow(label: String, options: List<String>, selected: Int, onSel
 private fun SwitchRow(label: String, checked: Boolean, onChange: (Boolean) -> Unit) {
     Row(Modifier.fillMaxWidth().padding(vertical = 4.dp), verticalAlignment = Alignment.CenterVertically) {
         Text(label, modifier = Modifier.weight(1f), style = MaterialTheme.typography.bodyLarge)
-        Switch(checked = checked, onCheckedChange = onChange)
+        SssSwitch(checked, onChange)
     }
 }

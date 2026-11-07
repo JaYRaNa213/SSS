@@ -7,12 +7,12 @@ import androidx.compose.material3.darkColorScheme
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.unit.dp
 
-private val GraphiteColors = darkColorScheme(
-    primary = TextPrimary, onPrimary = Bg,
-    primaryContainer = Surface3, onPrimaryContainer = TextPrimary,
+private val SssColors = darkColorScheme(
+    primary = Accent, onPrimary = AccentOn,
+    primaryContainer = AccentSoft, onPrimaryContainer = Accent,
     secondary = TextSecondary, onSecondary = Bg,
     secondaryContainer = Surface3, onSecondaryContainer = TextPrimary,
-    tertiary = Lime, onTertiary = Bg,
+    tertiary = Success, onTertiary = Bg,
     background = Bg, onBackground = TextPrimary,
     surface = Surface1, onSurface = TextPrimary,
     surfaceVariant = Surface2, onSurfaceVariant = TextMuted,
@@ -23,15 +23,15 @@ private val GraphiteColors = darkColorScheme(
     inverseSurface = TextPrimary, inverseOnSurface = Bg
 )
 
-private val GraphiteShapes = Shapes(
-    extraSmall = RoundedCornerShape(6.dp),
-    small = RoundedCornerShape(10.dp),
-    medium = RoundedCornerShape(14.dp),
-    large = RoundedCornerShape(20.dp),
-    extraLarge = RoundedCornerShape(24.dp)
+private val SssShapes = Shapes(
+    extraSmall = RoundedCornerShape(8.dp),
+    small = RoundedCornerShape(12.dp),
+    medium = RoundedCornerShape(18.dp),
+    large = RoundedCornerShape(24.dp),
+    extraLarge = RoundedCornerShape(28.dp)
 )
 
 @Composable
 fun SSSTheme(content: @Composable () -> Unit) {
-    MaterialTheme(colorScheme = GraphiteColors, typography = Typography, shapes = GraphiteShapes, content = content)
+    MaterialTheme(colorScheme = SssColors, typography = Typography, shapes = SssShapes, content = content)
 }

@@ -17,6 +17,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.text.input.ImeAction
+import androidx.compose.ui.unit.dp
 import com.sss.app.data.local.FolderEntity
 import com.sss.app.domain.folder.FolderNameValidator
 import com.sss.app.domain.folder.NameCheck
@@ -56,6 +57,8 @@ fun FolderNameDialog(
                 },
                 keyboardOptions = KeyboardOptions(imeAction = ImeAction.Done),
                 keyboardActions = KeyboardActions(onDone = { if (check is NameCheck.Ok) onConfirm(check.name) }),
+                shape = androidx.compose.foundation.shape.RoundedCornerShape(20.dp),
+                colors = com.sss.app.ui.theme.sssFieldColors(),
                 modifier = Modifier.fillMaxWidth().focusRequester(focus)
             )
         },
