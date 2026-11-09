@@ -51,6 +51,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
@@ -161,8 +162,9 @@ fun HomeScreen(
             item {
                 Spacer(Modifier.height(12.dp))
                 Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-                    Box(Modifier.size(46.dp).clip(RoundedCornerShape(15.dp)).background(Surface1), contentAlignment = Alignment.Center) {
-                        Image(painterResource(R.drawable.ic_splash_logo), "4S logo", Modifier.size(46.dp))
+                    Box(Modifier.size(46.dp).clip(RoundedCornerShape(15.dp)).background(Accent), contentAlignment = Alignment.Center) {
+                        Image(painterResource(R.drawable.ic_launcher_foreground), "4S logo",
+                              Modifier.size(46.dp).graphicsLayer(scaleX = 1.2f, scaleY = 1.2f))
                     }
                     Spacer(Modifier.width(12.dp))
                     Column(Modifier.weight(1f)) {
