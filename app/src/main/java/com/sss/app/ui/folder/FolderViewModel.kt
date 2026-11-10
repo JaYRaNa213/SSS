@@ -3,6 +3,7 @@ package com.sss.app.ui.folder
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.sss.app.data.local.FolderEntity
+import com.sss.app.data.local.FolderWithCount
 import com.sss.app.data.local.ScreenshotEntity
 import com.sss.app.data.local.ScreenshotMetaEntity
 import com.sss.app.data.local.StudyDocumentEntity
@@ -20,6 +21,10 @@ import com.sss.app.data.settings.AppSettings
 import com.sss.app.data.settings.SettingsKeys
 import com.sss.app.data.settings.SettingsRepository
 import com.sss.app.data.settings.SortOrder
+import com.sss.app.domain.folder.FolderTree
+import com.sss.app.ui.common.MetaMath
+import com.sss.app.ui.common.RotateChoice
+import com.sss.app.util.MediaIds
 import dagger.hilt.android.lifecycle.HiltViewModel
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.SharingStarted
@@ -49,6 +54,19 @@ class FolderViewModel @Inject constructor(
             repository.getScreenshotsByFolder(folderId)
                 .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
         }
+
+    private val treeFlows = mutableMapOf<List<Long>, StateFlow<List<ScreenshotEntity>>>()
+
+    /** Screenshots of one folder, or of several (a folder + its subfolders). */
+    fun screenshotsIn(ids: List<Long>): StateFlow<List<ScreenshotEntity>> =
+        if (ids.size == 1) screenshots(ids[0])
+        else treeFlows.getOrPut(ids) {
+            repository.getScreenshotsByFolders(ids)
+                .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
+        }
+
+    val foldersWithCount: StateFlow<List<FolderWithCount>> =
+        folderRepository.foldersWithCount.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
 
     val settings: StateFlow<AppSettings> =
         settingsRepository.settings.stateIn(viewModelScope, SharingStarted.Eagerly, AppSettings())
@@ -80,14 +98,24 @@ class FolderViewModel @Inject constructor(
 
     fun deleteFolder(id: Long, onDone: () -> Unit) {
         viewModelScope.launch {
-            val folder = folderRepository.getFoldersOnce().firstOrNull { it.id == id } ?: return@launch
+            val all = folderRepository.getFoldersOnce()
+            if (all.none { it.id == id }) return@launch
+            val ids = FolderTree.subtreeIds(all, id)
             val active = sessionRepository.getActiveSession()
-            if (active != null && active.isActive && active.folderId == id) sessionRepository.stopSession()
-            val paths = repository.getScreenshotsByFolderList(id).map { it.filePath }
+            if (active != null && active.isActive && active.folderId in ids) sessionRepository.stopSession()
+            val paths = repository.getScreenshotsByFoldersList(ids).map { it.filePath }
             if (paths.isNotEmpty()) allScreenshotsRepository.hide(paths)
-            folderRepository.deleteFolder(folder)
+            folderRepository.deleteFolderTree(ids)
             onDone()
         }
+    }
+
+    fun createFolder(raw: String, colorIndex: Int, parentId: Long?, onResult: (FolderResult) -> Unit) {
+        viewModelScope.launch { onResult(folderRepository.createFolder(raw, colorIndex, parentId)) }
+    }
+
+    fun moveFolder(id: Long, newParentId: Long?, onResult: (FolderResult) -> Unit) {
+        viewModelScope.launch { onResult(folderRepository.moveFolder(id, newParentId)) }
     }
 
     fun moveTo(items: List<ScreenshotEntity>, targetId: Long, fromOther: Boolean, onDone: () -> Unit = {}) {
@@ -113,6 +141,26 @@ class FolderViewModel @Inject constructor(
     /** [currentEffective] is the rotation shown right now (saved or auto). */
     fun rotate(path: String, currentEffective: Int) {
         viewModelScope.launch { metaRepository.setRotation(path, currentEffective + 90) }
+    }
+
+    /** Rotates many screenshots at once. By = relative to what each one shows now (same value the viewer and PDF use). */
+    fun rotateMany(shots: List<ScreenshotEntity>, choice: RotateChoice) {
+        if (shots.isEmpty()) return
+        viewModelScope.launch {
+            val s = settings.value
+            val metas = metaMap.value
+            val result = shots.associate { sh ->
+                val m = metas[MediaIds.fromPath(sh.filePath)]
+                val eff = MetaMath.effectiveRotation(m, s.autoCrop, s.autoRotateWide)
+                val deg = when (choice) {
+                    is RotateChoice.By -> ((eff + choice.degrees) % 360 + 360) % 360
+                    is RotateChoice.To -> ((choice.degrees % 360) + 360) % 360
+                    RotateChoice.Auto -> -1
+                }
+                sh.filePath to deg
+            }
+            metaRepository.setRotations(result)
+        }
     }
 
     fun saveCrop(path: String, t: Float, b: Float, l: Float, r: Float, applyToAll: List<String>?) {

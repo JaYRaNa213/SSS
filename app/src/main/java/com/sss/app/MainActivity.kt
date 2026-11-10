@@ -164,20 +164,23 @@ fun SssApp(startRoute: String) {
                 FolderScreen(
                     folderId = folderId,
                     onBack = { nav.popBackStack() },
-                    onOpenViewer = { index -> nav.navigate("viewer/$folderId/$index") },
+                    onOpenFolder = { id -> nav.navigate("folder/$id") },
+                    onOpenAncestor = { id -> nav.navigate("folder/$id") { popUpTo("home") } },
+                    onOpenViewer = { index, sub -> nav.navigate("viewer/$folderId/$index/${if (sub) 1 else 0}") },
                     onOpenDocument = { id -> nav.navigate("extracted-text/$id") },
                     onCreatePdf = { nav.navigate("pdf") },
                     allVm = allVm
                 )
             }
 
-            composable("viewer/{folderId}/{index}") { entry ->
+            composable("viewer/{folderId}/{index}/{sub}") { entry ->
                 val folderId = entry.arguments?.getString("folderId")?.toLongOrNull() ?: return@composable
                 val index = entry.arguments?.getString("index")?.toIntOrNull() ?: 0
+                val sub = entry.arguments?.getString("sub") == "1"
                 val homeEntry = remember(entry) { nav.getBackStackEntry("home") }
                 val allVm: AllScreenshotsViewModel = hiltViewModel(homeEntry)
                 ImageViewerScreen(
-                    folderId = folderId, initialIndex = index,
+                    folderId = folderId, initialIndex = index, includeSub = sub,
                     onBack = { nav.popBackStack() },
                     onOpenDocument = { id -> nav.navigate("extracted-text/$id") },
                     allScreenshotsViewModel = allVm

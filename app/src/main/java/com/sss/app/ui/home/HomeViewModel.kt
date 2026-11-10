@@ -12,6 +12,7 @@ import com.sss.app.data.repository.SessionRepository
 import com.sss.app.data.settings.AppSettings
 import com.sss.app.data.settings.SettingsKeys
 import com.sss.app.data.settings.SettingsRepository
+import com.sss.app.domain.folder.FolderTree
 import dagger.hilt.android.lifecycle.HiltViewModel
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.flow.SharingStarted
@@ -51,8 +52,8 @@ class HomeViewModel @Inject constructor(
         }
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), 0)
 
-    fun createFolder(raw: String, colorIndex: Int, onResult: (FolderResult) -> Unit) {
-        viewModelScope.launch { onResult(repository.createFolder(raw, colorIndex)) }
+    fun createFolder(raw: String, colorIndex: Int, parentId: Long?, onResult: (FolderResult) -> Unit) {
+        viewModelScope.launch { onResult(repository.createFolder(raw, colorIndex, parentId)) }
     }
 
     fun togglePause() {
@@ -61,13 +62,15 @@ class HomeViewModel @Inject constructor(
 
     fun deleteFolder(folder: FolderEntity) {
         viewModelScope.launch {
+            val all = repository.getFoldersOnce()
+            val ids = FolderTree.subtreeIds(all, folder.id)
             val active = sessionRepository.getActiveSession()
-            if (active != null && active.isActive && active.folderId == folder.id) sessionRepository.stopSession()
+            if (active != null && active.isActive && active.folderId in ids) sessionRepository.stopSession()
             try {
-                val paths = screenshotRepository.getScreenshotsByFolderList(folder.id).map { it.filePath }
+                val paths = screenshotRepository.getScreenshotsByFoldersList(ids).map { it.filePath }
                 if (paths.isNotEmpty()) allScreenshotsRepository.hide(paths)
             } catch (e: Exception) { /* ignore */ }
-            repository.deleteFolder(folder)
+            repository.deleteFolderTree(ids)
         }
     }
 }

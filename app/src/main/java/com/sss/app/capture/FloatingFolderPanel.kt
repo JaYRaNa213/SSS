@@ -4,8 +4,8 @@ import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
-import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -28,7 +28,6 @@ import androidx.compose.material.icons.filled.Pause
 import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
-import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
@@ -62,6 +61,7 @@ import com.sss.app.data.settings.AppSettings
 import com.sss.app.data.settings.SettingsKeys
 import com.sss.app.data.settings.SettingsRepository
 import com.sss.app.domain.folder.FolderNameValidator
+import com.sss.app.domain.folder.FolderTree
 import com.sss.app.domain.folder.NameCheck
 import com.sss.app.ui.theme.*
 import com.sss.app.util.toImageModel
@@ -92,6 +92,7 @@ fun FloatingFolderPanel(
         if (activeId != null) screenshotRepository.getScreenshotsByFolder(activeId) else flowOf(emptyList())
     }.collectAsState(initial = emptyList())
     val last = shots.maxByOrNull { it.capturedAt }
+    val folderRows = remember(folders) { FolderTree.flattenCounts(folders) }
 
     var moving by remember { mutableStateOf(false) }
     var creating by remember { mutableStateOf(false) }
@@ -133,7 +134,8 @@ fun FloatingFolderPanel(
 
             CapsLabel(if (moving) "Move last to" else "Save to", modifier = Modifier.padding(bottom = 6.dp))
             LazyColumn(Modifier.weight(1f, fill = false)) {
-                items(folders, key = { it.folder.id }) { f ->
+                items(folderRows, key = { it.item.folder.id }) { r ->
+                    val f = r.item
                     val isActive = f.folder.id == activeId && !paused && !moving
                     Row(
                         Modifier.fillMaxWidth().clip(RoundedCornerShape(16.dp))
@@ -149,7 +151,7 @@ fun FloatingFolderPanel(
                                     }
                                 }
                             }
-                            .padding(horizontal = 12.dp, vertical = 14.dp),
+                            .padding(start = (12 + r.depth * 16).dp, end = 12.dp, top = 14.dp, bottom = 14.dp),
                         verticalAlignment = Alignment.CenterVertically
                     ) {
                         ColorDot(folderColor(f.folder.colorIndex), 9.dp)

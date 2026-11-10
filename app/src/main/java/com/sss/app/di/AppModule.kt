@@ -113,6 +113,13 @@ object AppModule {
         }
     }
 
+    private val MIGRATION_6_7 = object : Migration(6, 7) {
+        override fun migrate(database: SupportSQLiteDatabase) {
+            database.execSQL("ALTER TABLE folders ADD COLUMN parentId INTEGER")
+            database.execSQL("CREATE INDEX IF NOT EXISTS index_folders_parentId ON folders(parentId)")
+        }
+    }
+
     @Provides
     @Singleton
     fun provideDatabase(
@@ -128,7 +135,8 @@ object AppModule {
                 MIGRATION_2_3,
                 MIGRATION_3_4,
                 MIGRATION_4_5,
-                MIGRATION_5_6
+                MIGRATION_5_6,
+                MIGRATION_6_7
             )
             .fallbackToDestructiveMigrationOnDowngrade()
             .build()

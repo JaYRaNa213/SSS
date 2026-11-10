@@ -43,6 +43,19 @@ class ScreenshotMetaRepository @Inject constructor(
         dao.upsert(cur.copy(rotation = ((degrees % 360) + 360) % 360))
     }
 
+    /** [rotations] maps image path -> degrees (0..359) or -1 for "automatic". One database write for all. */
+    suspend fun setRotations(rotations: Map<String, Int>) {
+        if (rotations.isEmpty()) return
+        val ids = rotations.keys.map { MediaIds.fromPath(it) }
+        val existing = ids.chunked(500).flatMap { dao.getMany(it) }.associateBy { it.mediaId }
+        val list = rotations.map { (path, deg) ->
+            val id = MediaIds.fromPath(path)
+            val cur = existing[id] ?: ScreenshotMetaEntity(mediaId = id)
+            cur.copy(rotation = if (deg < 0) -1 else deg % 360)
+        }
+        dao.upsertAll(list)
+    }
+
     suspend fun saveCrop(path: String, top: Float, bottom: Float, left: Float, right: Float) {
         analyzeUri(path)
         val id = MediaIds.fromPath(path)

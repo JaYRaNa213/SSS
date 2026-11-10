@@ -70,4 +70,10 @@ interface ScreenshotDao {
 
     @Query("UPDATE screenshots SET folderId = :folderId, sequenceNumber = :seq WHERE id = :id")
     suspend fun moveOne(id: Long, folderId: Long, seq: Int)
+
+    @Query("SELECT * FROM screenshots WHERE folderId IN (:folderIds) ORDER BY sequenceNumber ASC")
+    fun getScreenshotsByFolders(folderIds: List<Long>): Flow<List<ScreenshotEntity>>
+
+    @Query("SELECT * FROM screenshots WHERE folderId IN (:folderIds)")
+    suspend fun getScreenshotsByFoldersList(folderIds: List<Long>): List<ScreenshotEntity>
 }

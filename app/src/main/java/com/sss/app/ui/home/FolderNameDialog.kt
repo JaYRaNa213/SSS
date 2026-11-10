@@ -30,10 +30,11 @@ fun FolderNameDialog(
     onConfirm: (String) -> Unit,
     onDismiss: () -> Unit,
     initial: String = "",
-    ignoreId: Long? = null
+    ignoreId: Long? = null,
+    parentId: Long? = null
 ) {
     var text by remember { mutableStateOf(initial) }
-    val check = FolderNameValidator.check(text, existing, ignoreId)
+    val check = FolderNameValidator.check(text, existing, ignoreId, parentId)
     val focus = remember { FocusRequester() }
     LaunchedEffect(Unit) { focus.requestFocus() }
     val showError = text.isNotEmpty() && check is NameCheck.Error

@@ -38,6 +38,7 @@ import androidx.savedstate.SavedStateRegistry
 import androidx.savedstate.SavedStateRegistryController
 import androidx.savedstate.SavedStateRegistryOwner
 import androidx.savedstate.setViewTreeSavedStateRegistryOwner
+import com.sss.app.domain.folder.FolderTree
 import com.sss.app.MainActivity
 import com.sss.app.R
 import com.sss.app.data.repository.FolderRepository
@@ -224,7 +225,7 @@ class OverlayBubbleService : Service(), LifecycleOwner, SavedStateRegistryOwner 
                 ) { s, p -> s to p }.collect { (session, paused) ->
                     if (session != null && session.isActive) {
                         bubbleView?.paused = paused
-                        val name = folderRepository.getFoldersOnce().firstOrNull { it.id == session.folderId }?.name
+                        val name = FolderTree.pathLabel(folderRepository.getFoldersOnce(), session.folderId).ifBlank { null }
                         activeName = name
                         updateNotification(name, paused)
                         if (paused) screenshotObserver.stop() else screenshotObserver.start()   // start() is idempotent
