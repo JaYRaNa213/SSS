@@ -30,6 +30,7 @@ import androidx.compose.material.icons.filled.Folder
 import androidx.compose.material.icons.filled.KeyboardArrowDown
 import androidx.compose.material.icons.filled.KeyboardArrowUp
 import androidx.compose.material.icons.filled.Pause
+import androidx.compose.material.icons.filled.PictureAsPdf
 import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material.icons.filled.Stop
@@ -89,6 +90,7 @@ import java.time.LocalTime
 fun HomeScreen(
     onOpenFolder: (Long) -> Unit,
     onOpenSettings: () -> Unit,
+    onOpenPdfs: () -> Unit = {},
     homeViewModel: HomeViewModel = hiltViewModel(),
     captureViewModel: CaptureViewModel = hiltViewModel(),
     allVm: AllScreenshotsViewModel = hiltViewModel()
@@ -181,6 +183,8 @@ fun HomeScreen(
                         Text(greeting, color = TextMuted, style = MaterialTheme.typography.bodyMedium)
                         Text("Your study shots", style = MaterialTheme.typography.titleLarge)
                     }
+                    RoundIconButton(Icons.Default.PictureAsPdf, "My PDFs", onOpenPdfs)
+                    Spacer(Modifier.width(8.dp))
                     RoundIconButton(Icons.Default.Settings, "Settings", onOpenSettings)
                 }
                 Spacer(Modifier.height(20.dp))

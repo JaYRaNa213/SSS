@@ -34,10 +34,12 @@ import androidx.compose.ui.unit.dp
 import androidx.core.splashscreen.SplashScreen.Companion.installSplashScreen
 import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.lifecycle.lifecycleScope
+import androidx.navigation.NavType
 import androidx.navigation.compose.NavHost
 import androidx.navigation.compose.composable
 import androidx.navigation.compose.currentBackStackEntryAsState
 import androidx.navigation.compose.rememberNavController
+import androidx.navigation.navArgument
 import com.sss.app.data.settings.SettingsRepository
 import com.sss.app.ui.folder.AllScreenshotsViewModel
 import com.sss.app.ui.folder.FolderScreen
@@ -48,6 +50,8 @@ import com.sss.app.ui.library.NotesScreen
 import com.sss.app.ui.ocr.ExtractedTextScreen
 import com.sss.app.ui.onboarding.OnboardingScreen
 import com.sss.app.ui.pdf.PdfFlowScreen
+import com.sss.app.ui.pdf.PdfLibraryScreen
+import com.sss.app.ui.pdf.PdfViewerScreen
 import com.sss.app.ui.settings.SettingsScreen
 import com.sss.app.ui.theme.Bg
 import com.sss.app.ui.theme.BottomTab
@@ -135,7 +139,8 @@ fun SssApp(startRoute: String) {
             composable("home") {
                 HomeScreen(
                     onOpenFolder = { id -> nav.navigate("folder/$id") },
-                    onOpenSettings = { goTab("settings") }
+                    onOpenSettings = { goTab("settings") },
+                    onOpenPdfs = { nav.navigate("pdfs") }
                 )
             }
 
@@ -192,7 +197,27 @@ fun SssApp(startRoute: String) {
                 ExtractedTextScreen(documentId = id, onBackClick = { nav.popBackStack() })
             }
 
-            composable("pdf") { PdfFlowScreen(onBack = { nav.popBackStack() }) }
+            composable("pdf") {
+                PdfFlowScreen(
+                    onBack = { nav.popBackStack() },
+                    onViewPdf = { id -> nav.navigate("pdf-viewer/$id") { popUpTo("pdf") { inclusive = true } } },
+                    onOpenLibrary = { nav.navigate("pdfs") { popUpTo("pdf") { inclusive = true } } }
+                )
+            }
+
+            composable("pdfs") {
+                PdfLibraryScreen(
+                    onBack = { nav.popBackStack() },
+                    onOpenPdf = { id -> nav.navigate("pdf-viewer/$id") }
+                )
+            }
+
+            composable(
+                "pdf-viewer/{id}",
+                arguments = listOf(navArgument("id") { type = NavType.LongType })
+            ) {
+                PdfViewerScreen(onBack = { nav.popBackStack() })
+            }
 
             composable("settings") {
                 SettingsScreen(

@@ -8,6 +8,7 @@ import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.sss.app.data.local.ScreenshotEntity
 import com.sss.app.data.local.ScreenshotMetaEntity
+import com.sss.app.data.pdf.PdfLibraryRepository
 import com.sss.app.data.repository.PdfRequestHolder
 import com.sss.app.data.repository.ScreenshotMetaRepository
 import com.sss.app.data.settings.SettingsRepository
@@ -48,7 +49,8 @@ class PdfViewModel @Inject constructor(
     @ApplicationContext private val context: Context,
     holder: PdfRequestHolder,
     private val metaRepository: ScreenshotMetaRepository,
-    private val settingsRepository: SettingsRepository
+    private val settingsRepository: SettingsRepository,
+    private val pdfLibraryRepository: PdfLibraryRepository
 ) : ViewModel() {
 
     private val request = holder.request
@@ -102,6 +104,12 @@ class PdfViewModel @Inject constructor(
     fun sheetCount(): Int = if (pages.isEmpty()) 0 else (pages.size + options.perPage - 1) / options.perPage
 
     fun finalName(): String = PdfSaver.uniqueName(context, PdfSaver.sanitize(name))
+
+    suspend fun resolvePdfId(saved: PdfSaver.Saved): Long? {
+        val idFromUri = runCatching { android.content.ContentUris.parseId(saved.uri) }.getOrNull()
+        if (idFromUri != null && idFromUri > 0) return idFromUri
+        return pdfLibraryRepository.findByName(saved.name)?.id
+    }
 
     fun create() {
         if (job?.isActive == true || pages.isEmpty()) return
