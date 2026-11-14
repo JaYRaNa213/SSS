@@ -3,7 +3,7 @@
 **4S** is a native Android application built with **Kotlin** and **Jetpack Compose**. It allows users to organize screenshots into subject folders in real-time while using other apps, view screenshots with native gallery gesture controls, perform multi-image OCR (Optical Character Recognition) using Google ML Kit, edit structured study notes, and export notes or image sets to formatted A4 PDF documents.
 
 ---
-
+https://github.com/JaYRaNa213/SSS/blob/main/Screenshot_2026-11-14-12-41-12-74_3a2c70eea8082a78c2f0d5611db42e4d.jpg
 ## ✨ Key Features
 
 ### 1. ⚡ Floating AssistiveTouch 4S Overlay & Folder Switcher
