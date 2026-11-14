@@ -87,10 +87,19 @@ fun SettingsScreen(
                     Choice("Grid columns", listOf("2", "3"), s.gridColumns - 2) { vm.set(SettingsKeys.GRID_COLUMNS, it + 2) }
                     Toggle("Date section headers", s.dateHeaders) { vm.set(SettingsKeys.DATE_HEADERS, it) }
                 }
+                item { Section("Text extraction") }
+                item {
+                    Choice("Remove unrelated text", listOf("Off", "Smart", "Strict"), s.ocrCleanup) { vm.set(SettingsKeys.OCR_CLEANUP, it) }
+                    Text(
+                        "Smart hides clocks, buttons, watermarks and text repeated on most screenshots. " +
+                            "Hidden lines stay under \"Ignored text\" so you can add them back.",
+                        color = TextMuted, style = MaterialTheme.typography.bodySmall
+                    )
+                }
                 item { Section("PDF defaults") }
                 item {
                     Choice("Quality", listOf("High", "Medium", "Low"), s.pdfQuality) { vm.set(SettingsKeys.PDF_QUALITY, it) }
-                    Choice("Images per page", listOf("1", "2"), s.pdfPerPage - 1) { vm.set(SettingsKeys.PDF_PER_PAGE, it + 1) }
+                    Choice("Images per page", listOf("1", "2", "3"), s.pdfPerPage - 1) { vm.set(SettingsKeys.PDF_PER_PAGE, it + 1) }
                 }
                 item { Section("Permissions") }
                 item {

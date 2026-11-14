@@ -6,16 +6,22 @@ import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import com.sss.app.data.local.StudyDocumentEntity
 import com.sss.app.data.ocr.MultiImageOcrProcessor
+import com.sss.app.data.ocr.OcrImageResult
+import com.sss.app.data.ocr.OcrInput
 import com.sss.app.data.ocr.OcrRepository
+import com.sss.app.data.repository.ScreenshotMetaRepository
 import com.sss.app.data.repository.StudyDocumentRepository
-import com.sss.app.domain.ocr.TextCleanupProcessor
+import com.sss.app.data.settings.SettingsRepository
+import com.sss.app.domain.ocr.CleanupLevel
+import com.sss.app.domain.ocr.NoteBuilder
+import com.sss.app.util.MediaIds
 import dagger.hilt.android.lifecycle.HiltViewModel
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
-import kotlinx.coroutines.flow.debounce
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import javax.inject.Inject
@@ -23,7 +29,9 @@ import javax.inject.Inject
 @HiltViewModel
 class OcrViewModel @Inject constructor(
     application: Application,
-    private val studyDocumentRepository: StudyDocumentRepository
+    private val studyDocumentRepository: StudyDocumentRepository,
+    private val metaRepository: ScreenshotMetaRepository,
+    private val settingsRepository: SettingsRepository
 ) : AndroidViewModel(application) {
 
     private val ocrRepository = OcrRepository(application)
@@ -41,88 +49,56 @@ class OcrViewModel @Inject constructor(
     fun extractTextFromImages(folderId: Long?, folderName: String, selectedUris: List<Uri>) {
         if (_ocrUiState.value.status == OcrStatus.PROCESSING) return
         if (selectedUris.isEmpty()) {
-            _ocrUiState.value = OcrUiState(
-                status = OcrStatus.ERROR,
-                errorMessage = "Select at least one screenshot."
-            )
+            _ocrUiState.value = OcrUiState(status = OcrStatus.ERROR, errorMessage = "Select at least one screenshot.")
             return
         }
-
         val orderedUris = selectedUris.toList()
-
-        _ocrUiState.value = OcrUiState(
-            status = OcrStatus.PROCESSING,
-            totalImages = orderedUris.size
-        )
+        _ocrUiState.value = OcrUiState(status = OcrStatus.PROCESSING, totalImages = orderedUris.size)
 
         viewModelScope.launch {
             try {
-                val results = withContext(Dispatchers.IO) {
-                    multiProcessor.processImages(orderedUris) { completed, total ->
-                        _ocrUiState.value = _ocrUiState.value.copy(
-                            completedImages = completed,
-                            totalImages = total
-                        )
+                val settings = settingsRepository.settings.first()
+                // make sure every screenshot has its crop, so only the content area is read
+                if (settings.autoCrop) withContext(Dispatchers.IO) { metaRepository.analyzeMissing(orderedUris.map { it.toString() }) }
+                val metas = metaRepository.metaMap.first()
+                val inputs = orderedUris.map { u -> OcrInput(u, metas[MediaIds.fromPath(u.toString())]) }
+
+                val pages = withContext(Dispatchers.IO) {
+                    multiProcessor.processImages(inputs, settings.autoCrop) { completed, total ->
+                        _ocrUiState.value = _ocrUiState.value.copy(completedImages = completed, totalImages = total)
                     }
                 }
 
-                val succeededCount = results.count { it.succeeded }
-                val combinedTextBuilder = StringBuilder()
-
-                results.forEachIndexed { index, result ->
-                    combinedTextBuilder.append("--- Screenshot ${index + 1} ---\n\n")
-                    if (result.succeeded) {
-                        val cleaned = TextCleanupProcessor.clean(result.extractedText)
-                        if (cleaned.isNotBlank()) {
-                            combinedTextBuilder.append(cleaned)
-                        } else {
-                            combinedTextBuilder.append("[No text recognized in this image]")
-                        }
-                    } else {
-                        combinedTextBuilder.append("[OCR Failed: ${result.errorMessage}]")
-                    }
-                    combinedTextBuilder.append("\n\n")
-                }
-
-                val finalContent = combinedTextBuilder.toString().trim()
-                val docTitle = "$folderName Notes"
+                val level = CleanupLevel.fromInt(settings.ocrCleanup)
+                val content = withContext(Dispatchers.Default) { NoteBuilder.build(pages, level) }
+                val failed = pages.count { it.error != null }
 
                 val document = StudyDocumentEntity(
-                    title = docTitle,
-                    content = finalContent,
+                    title = "$folderName Notes",
+                    content = content,
                     sourceFolderId = folderId,
                     sourceImageCount = orderedUris.size
                 )
-
                 val docId = studyDocumentRepository.saveDocument(document)
-                val savedDoc = document.copy(id = docId)
-
-                _currentDocument.value = savedDoc
+                _currentDocument.value = document.copy(id = docId)
 
                 _ocrUiState.value = OcrUiState(
-                    status = if (succeededCount == orderedUris.size) OcrStatus.SUCCESS else OcrStatus.PARTIAL_SUCCESS,
+                    status = if (failed == 0) OcrStatus.SUCCESS else OcrStatus.PARTIAL_SUCCESS,
                     completedImages = orderedUris.size,
                     totalImages = orderedUris.size,
-                    results = results,
+                    results = pages.mapIndexed { i, p -> OcrImageResult(orderedUris[i].toString(), i, p.rawText, p.error) },
                     createdDocumentId = docId
                 )
-
             } catch (e: CancellationException) {
                 throw e
             } catch (e: Exception) {
-                _ocrUiState.value = OcrUiState(
-                    status = OcrStatus.ERROR,
-                    errorMessage = e.message ?: "Text extraction failed."
-                )
+                _ocrUiState.value = OcrUiState(status = OcrStatus.ERROR, errorMessage = e.message ?: "Text extraction failed.")
             }
         }
     }
 
     fun loadDocument(documentId: Long) {
-        viewModelScope.launch {
-            val doc = studyDocumentRepository.getDocumentById(documentId)
-            _currentDocument.value = doc
-        }
+        viewModelScope.launch { _currentDocument.value = studyDocumentRepository.getDocumentById(documentId) }
     }
 
     fun updateDocumentTitle(newTitle: String) {
@@ -154,7 +130,10 @@ class OcrViewModel @Inject constructor(
         }
     }
 
-    fun resetOcrState() {
-        _ocrUiState.value = OcrUiState()
+    fun resetOcrState() { _ocrUiState.value = OcrUiState() }
+
+    override fun onCleared() {
+        ocrRepository.close()
+        super.onCleared()
     }
 }

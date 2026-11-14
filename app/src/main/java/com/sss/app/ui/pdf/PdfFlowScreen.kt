@@ -81,8 +81,11 @@ fun PdfFlowScreen(onBack: () -> Unit, vm: PdfViewModel = hiltViewModel()) {
                 // 2 OPTIONS
                 item {
                     MonoLabel("2  Options", modifier = Modifier.padding(top = 20.dp, bottom = 6.dp))
-                    OptionRow("Images per page", listOf("1", "2"), vm.options.perPage - 1) { vm.options = vm.options.copy(perPage = it + 1) }
+                    OptionRow("Images per page", listOf("1", "2", "3"), vm.options.perPage - 1) { vm.options = vm.options.copy(perPage = it + 1) }
                     OptionRow("Page size", listOf("A4", "Fit to image"), if (vm.options.a4) 0 else 1) { vm.options = vm.options.copy(a4 = it == 0) }
+                    if (vm.options.perPage >= 2 && !vm.options.a4) {
+                        Text("\"Fit to image\" only applies to 1 image per page. This PDF will be A4.", color = TextMuted, style = MaterialTheme.typography.bodySmall)
+                    }
                     OptionRow("Quality", PdfQuality.entries.map { it.label }, vm.options.quality.ordinal) { vm.options = vm.options.copy(quality = PdfQuality.entries[it]) }
                     OptionRow("Page order", PdfOrder.entries.map { it.label }, vm.options.order.ordinal) { vm.setOrder(PdfOrder.entries[it]) }
                     SwitchRow("Use auto-crop", vm.options.useCrop) { vm.options = vm.options.copy(useCrop = it) }
@@ -91,7 +94,7 @@ fun PdfFlowScreen(onBack: () -> Unit, vm: PdfViewModel = hiltViewModel()) {
                 // 3 PREVIEW
                 item {
                     MonoLabel(
-                        "3  Pages \u00B7 ${vm.pages.size} \u00B7 ~${String.format(Locale.US, "%.1f", vm.estimateMb())} MB",
+                        "3  Images \u00B7 ${vm.pages.size} \u00B7 ${vm.sheetCount()} pages \u00B7 ~${String.format(Locale.US, "%.1f", vm.estimateMb())} MB",
                         modifier = Modifier.padding(top = 20.dp, bottom = 8.dp)
                     )
                     if (vm.pages.isEmpty()) Text("No pages left.", color = TextMuted)
@@ -123,7 +126,7 @@ fun PdfFlowScreen(onBack: () -> Unit, vm: PdfViewModel = hiltViewModel()) {
 
             Box(Modifier.padding(horizontal = 20.dp, vertical = 12.dp)) {
                 SssPrimaryButton(
-                    "Create PDF \u00B7 ${vm.pages.size} pages",
+                    "Create PDF \u00B7 ${vm.sheetCount()} page${if (vm.sheetCount() == 1) "" else "s"}",
                     enabled = base.isNotBlank() && vm.pages.isNotEmpty() && run !is PdfRun.Running,
                     onClick = vm::create
                 )
@@ -137,7 +140,7 @@ fun PdfFlowScreen(onBack: () -> Unit, vm: PdfViewModel = hiltViewModel()) {
             title = { Text("Creating PDF") },
             text = {
                 Column {
-                    Text("Creating page ${run.done} of ${run.total}")
+                    Text("Adding image ${run.done} of ${run.total}")
                     Spacer(Modifier.height(12.dp))
                     LinearProgressIndicator(progress = { if (run.total == 0) 0f else run.done.toFloat() / run.total }, modifier = Modifier.fillMaxWidth(), color = Accent, trackColor = Surface3)
                 }

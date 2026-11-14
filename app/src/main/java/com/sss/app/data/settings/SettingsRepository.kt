@@ -37,7 +37,8 @@ data class AppSettings(
     val bubbleX: Int = -1,
     val bubbleY: Int = -1,
     val pdfQuality: Int = 1,          // 0 high, 1 medium, 2 low
-    val pdfPerPage: Int = 1
+    val pdfPerPage: Int = 1,
+    val ocrCleanup: Int = 1           // 0 off, 1 smart, 2 strict
 )
 
 object SettingsKeys {
@@ -57,6 +58,7 @@ object SettingsKeys {
     val BUBBLE_Y = intPreferencesKey("bubble_y")
     val PDF_QUALITY = intPreferencesKey("pdf_quality")
     val PDF_PER_PAGE = intPreferencesKey("pdf_per_page")
+    val OCR_CLEANUP = intPreferencesKey("ocr_cleanup")
 }
 
 @Singleton
@@ -85,7 +87,8 @@ class SettingsRepository @Inject constructor(
                 bubbleX = p[SettingsKeys.BUBBLE_X] ?: d.bubbleX,
                 bubbleY = p[SettingsKeys.BUBBLE_Y] ?: d.bubbleY,
                 pdfQuality = p[SettingsKeys.PDF_QUALITY] ?: d.pdfQuality,
-                pdfPerPage = p[SettingsKeys.PDF_PER_PAGE] ?: d.pdfPerPage
+                pdfPerPage = p[SettingsKeys.PDF_PER_PAGE] ?: d.pdfPerPage,
+                ocrCleanup = p[SettingsKeys.OCR_CLEANUP] ?: d.ocrCleanup
             )
         }
         .distinctUntilChanged()
