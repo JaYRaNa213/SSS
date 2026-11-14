@@ -32,7 +32,7 @@ private val faq = listOf(
     "Why does the bubble show in my screenshots?" to "The button is drawn on top of the screen, so the system includes it. Make it smaller or fainter in Settings and move it to the screen edge. Auto-crop cannot remove it.",
     "How do I stop capture?" to "Tap Stop capture on the home screen, or Stop in the notification, or Stop in the bubble panel.",
     "Does deleting remove my photos?" to "Inside a folder, delete only removes the screenshot from 4S (the file stays in your gallery) and you can Undo. In Other, delete removes the original file after Android asks you to confirm.",
-    "Where are PDFs saved?" to "In Downloads/4S. You can open, share or find them from the PDF result screen."
+    "Where are PDFs saved?" to "In Downloads/4S. You can also open, share, rename or delete them anytime from the PDF button on the Home screen."
 )
 
 @Composable

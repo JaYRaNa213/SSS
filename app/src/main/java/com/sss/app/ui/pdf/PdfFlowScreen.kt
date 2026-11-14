@@ -34,6 +34,10 @@ import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -47,7 +51,12 @@ import com.sss.app.util.toImageModel
 import java.util.Locale
 
 @Composable
-fun PdfFlowScreen(onBack: () -> Unit, vm: PdfViewModel = hiltViewModel()) {
+fun PdfFlowScreen(
+    onBack: () -> Unit,
+    onViewPdf: (Long) -> Unit = {},
+    onOpenLibrary: () -> Unit = {},
+    vm: PdfViewModel = hiltViewModel()
+) {
     val context = LocalContext.current
     val metaMap by vm.metaMap.collectAsState()
     val run = vm.run
@@ -150,6 +159,12 @@ fun PdfFlowScreen(onBack: () -> Unit, vm: PdfViewModel = hiltViewModel()) {
         )
         is PdfRun.Done -> {
             val saved = run.saved
+            var resolvedId by remember(saved) { mutableStateOf<Long?>(runCatching { android.content.ContentUris.parseId(saved.uri) }.getOrNull()?.takeIf { it > 0 }) }
+            LaunchedEffect(saved) {
+                if (resolvedId == null) {
+                    resolvedId = vm.resolvePdfId(saved)
+                }
+            }
             AlertDialog(
                 onDismissRequest = vm::dismissResult,
                 title = { Text("PDF saved") },
@@ -158,29 +173,28 @@ fun PdfFlowScreen(onBack: () -> Unit, vm: PdfViewModel = hiltViewModel()) {
                         Text("${saved.name} \u00B7 ${String.format(Locale.US, "%.1f", saved.sizeBytes / 1_048_576f)} MB")
                         Spacer(Modifier.height(12.dp))
                         Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                            GhostButton("Open", modifier = Modifier.weight(1f), onClick = {
-                                try {
-                                    context.startActivity(
-                                        Intent(Intent.ACTION_VIEW).setDataAndType(saved.uri, "application/pdf")
-                                            .addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_ACTIVITY_NEW_TASK)
-                                    )
-                                } catch (e: ActivityNotFoundException) {
-                                    Toast.makeText(context, "No PDF viewer installed", Toast.LENGTH_SHORT).show()
-                                }
-                            })
-                            GhostButton("Share", modifier = Modifier.weight(1f), onClick = {
-                                val i = Intent(Intent.ACTION_SEND).apply {
-                                    type = "application/pdf"
-                                    putExtra(Intent.EXTRA_STREAM, saved.uri)
-                                    addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
-                                }
-                                context.startActivity(Intent.createChooser(i, "Share PDF"))
-                            })
+                            val id = resolvedId
+                            if (id != null) {
+                                SssPrimaryButton(
+                                    "Read now",
+                                    onClick = { vm.dismissResult(); onViewPdf(id) },
+                                    modifier = Modifier.weight(1f)
+                                )
+                            }
+                            GhostButton(
+                                "All PDFs",
+                                onClick = { vm.dismissResult(); onOpenLibrary() },
+                                modifier = Modifier.weight(1f)
+                            )
                         }
                         Spacer(Modifier.height(8.dp))
-                        GhostButton("Show in Downloads", modifier = Modifier.fillMaxWidth(), onClick = {
-                            try { context.startActivity(Intent(DownloadManager.ACTION_VIEW_DOWNLOADS).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)) }
-                            catch (e: ActivityNotFoundException) { Toast.makeText(context, "Open the Files app > Downloads > 4S", Toast.LENGTH_LONG).show() }
+                        GhostButton("Share", modifier = Modifier.fillMaxWidth(), onClick = {
+                            val i = Intent(Intent.ACTION_SEND).apply {
+                                type = "application/pdf"
+                                putExtra(Intent.EXTRA_STREAM, saved.uri)
+                                addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+                            }
+                            context.startActivity(Intent.createChooser(i, "Share PDF"))
                         })
                     }
                 },
