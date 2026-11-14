@@ -61,6 +61,7 @@ import com.sss.app.data.local.StudyDocumentEntity
 import com.sss.app.data.repository.FolderRepository
 import com.sss.app.data.repository.ScreenshotRepository
 import com.sss.app.data.repository.StudyDocumentRepository
+import com.sss.app.domain.folder.FolderTree
 import com.sss.app.ui.folder.AllScreenshotsViewModel
 import com.sss.app.ui.theme.*
 import com.sss.app.util.DateLabels
@@ -102,7 +103,17 @@ fun LibraryScreen(
     var query by remember { mutableStateOf("") }
 
     val all = remember(shots, others) { (shots + others).sortedByDescending { it.capturedAt } }
-    val visible = remember(all, filter) { if (filter == -2L) all else all.filter { it.folderId == filter } }
+    val folderRows = remember(folders) { FolderTree.flattenEntities(folders) }
+    val visible = remember(all, filter, folders) {
+        when (filter) {
+            -2L -> all
+            -1L -> all.filter { it.folderId == -1L }
+            else -> {
+                val ids = FolderTree.subtreeIds(folders, filter).toSet()      // the folder plus all its subfolders
+                all.filter { it.folderId in ids }
+            }
+        }
+    }
     val hits = remember(docs, query) {
         if (query.isBlank()) emptyList() else docs.filter { it.title.contains(query, true) || it.content.contains(query, true) }
     }
@@ -124,7 +135,9 @@ fun LibraryScreen(
             LazyRow(contentPadding = PaddingValues(horizontal = 20.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 item { FilterPill("All", filter == -2L, { filter = -2L }) }
                 item { FilterPill("Unsorted \u00B7 ${others.size}", filter == -1L, { filter = -1L }) }
-                items(folders, key = { it.id }) { f -> FilterPill(f.name, filter == f.id, { filter = f.id }) }
+                items(folderRows, key = { it.item.id }) { r ->
+                    FilterPill(FolderTree.pathLabel(folders, r.item.id), filter == r.item.id, { filter = r.item.id })
+                }
             }
             Spacer(Modifier.height(12.dp))
 

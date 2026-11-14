@@ -27,6 +27,8 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.ChevronRight
 import androidx.compose.material.icons.filled.Folder
+import androidx.compose.material.icons.filled.KeyboardArrowDown
+import androidx.compose.material.icons.filled.KeyboardArrowUp
 import androidx.compose.material.icons.filled.Pause
 import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.filled.Settings
@@ -71,6 +73,7 @@ import com.sss.app.R
 import com.sss.app.capture.OverlayBubbleService
 import com.sss.app.data.local.FolderWithCount
 import com.sss.app.data.repository.FolderResult
+import com.sss.app.domain.folder.FolderTree
 import com.sss.app.ui.capture.CaptureViewModel
 import com.sss.app.ui.folder.AllScreenshotsViewModel
 import com.sss.app.ui.permissions.PermissionExplainDialog
@@ -105,6 +108,7 @@ fun HomeScreen(
     var pendingStart by remember { mutableStateOf<Long?>(null) }
     var photoPermanent by remember { mutableStateOf(false) }
     var overlayAsked by rememberSaveable { mutableStateOf(false) }
+    var expanded by rememberSaveable { mutableStateOf(listOf<Long>()) }
 
     val lifecycleOwner = LocalLifecycleOwner.current
     DisposableEffect(lifecycleOwner) {
@@ -149,6 +153,12 @@ fun HomeScreen(
     }
 
     val activeFolder = folders.firstOrNull { it.folder.id == session?.folderId }
+    val entities = remember(folders) { folders.map { it.folder } }
+    val rows = remember(folders, expanded) { FolderTree.flattenCounts(folders, expanded.toSet()) }
+    val activeId = if (isActive) session?.folderId else null
+    val activeParentPath = remember(entities, activeId) {
+        activeId?.let { id -> FolderTree.path(entities, id).dropLast(1).joinToString(" \u203A ") { it.name } }.orEmpty()
+    }
     val greeting = remember {
         val h = LocalTime.now().hour
         if (h < 12) "Good morning" else if (h < 17) "Good afternoon" else "Good evening"
@@ -179,6 +189,7 @@ fun HomeScreen(
             item {
                 if (isActive) HeroActive(
                     folderName = activeFolder?.folder?.name.orEmpty(),
+                    parentPath = activeParentPath,
                     count = activeFolder?.screenshotCount ?: 0, today = today, paused = settings.capturePaused,
                     onStop = { captureViewModel.stopCapture(); OverlayBubbleService.hideBubble(context) },
                     onPause = homeViewModel::togglePause,
@@ -207,8 +218,22 @@ fun HomeScreen(
             }
 
             if (folders.isEmpty()) item { EmptyFolders(onCreate = { showCreate = true }) }
-            else items(folders, key = { it.folder.id }) { item ->
-                FolderCard(item, active = isActive && item.folder.id == session?.folderId, onOpen = { onOpenFolder(item.folder.id) })
+            else items(rows, key = { it.item.folder.id }) { row ->
+                val f = row.item
+                val id = f.folder.id
+                val (t1, t2) = FolderTree.thumbs(folders, id)
+                FolderCard(
+                    item = f, depth = row.depth,
+                    total = FolderTree.totalCount(folders, id),
+                    childCount = folders.count { it.folder.parentId == id },
+                    lastUpdated = FolderTree.lastUpdated(folders, id),
+                    thumb1 = t1, thumb2 = t2,
+                    expanded = id in expanded,
+                    active = activeId == id,
+                    activeInside = activeId != null && activeId in FolderTree.descendantIds(entities, id),
+                    onOpen = { onOpenFolder(id) },
+                    onToggle = { expanded = if (id in expanded) expanded - id else expanded + id }
+                )
                 Spacer(Modifier.height(10.dp))
             }
             item { Spacer(Modifier.height(24.dp)) }
@@ -217,7 +242,9 @@ fun HomeScreen(
 
     if (showPicker) FolderPickerSheet(
         title = "Save screenshots to",
-        items = folders.map { PickItem(it.folder.id, it.folder.name, it.folder.colorIndex, it.screenshotCount) },
+        items = FolderTree.flattenCounts(folders).map {
+            PickItem(it.item.folder.id, it.item.folder.name, it.item.folder.colorIndex, it.item.screenshotCount, it.depth)
+        },
         activeId = if (isActive) session?.folderId else null,
         onPick = { id -> showPicker = false; beginCapture(id) },
         onNew = { showPicker = false; showCreate = true },
@@ -225,10 +252,15 @@ fun HomeScreen(
     )
 
     if (showCreate) NewFolderSheet(
-        existing = folders.map { it.folder },
-        onCreate = { name, color, start ->
+        existing = entities,
+        onCreate = { name, color, start, parent ->
             showCreate = false
-            homeViewModel.createFolder(name, color) { r -> if (start && r is FolderResult.Success) beginCapture(r.id) }
+            homeViewModel.createFolder(name, color, parent) { r ->
+                if (r is FolderResult.Success) {
+                    if (parent != null && parent !in expanded) expanded = expanded + parent
+                    if (start) beginCapture(r.id)
+                }
+            }
         },
         onDismiss = { showCreate = false }
     )
@@ -259,7 +291,7 @@ fun HomeScreen(
 
 @Composable
 private fun HeroActive(
-    folderName: String, count: Int, today: Int, paused: Boolean,
+    folderName: String, parentPath: String, count: Int, today: Int, paused: Boolean,
     onStop: () -> Unit, onPause: () -> Unit, onSwitch: () -> Unit
 ) {
     val tint = AccentOn.copy(alpha = 0.12f)
@@ -276,7 +308,10 @@ private fun HeroActive(
             }
         }
         Spacer(Modifier.height(18.dp))
-        Text("Saving new screenshots to", color = AccentOn.copy(alpha = 0.7f), style = MaterialTheme.typography.bodyMedium)
+        Text(
+            if (parentPath.isEmpty()) "Saving new screenshots to" else "Saving to $parentPath \u203A",
+            color = AccentOn.copy(alpha = 0.7f), style = MaterialTheme.typography.bodyMedium, maxLines = 1, overflow = TextOverflow.Ellipsis
+        )
         Text(folderName, color = AccentOn, style = MaterialTheme.typography.headlineLarge, maxLines = 1, overflow = TextOverflow.Ellipsis)
         Spacer(Modifier.height(6.dp))
         Row {
@@ -338,12 +373,18 @@ private fun UnsortedCard(count: Int, onOpen: () -> Unit) {
 }
 
 @Composable
-private fun FolderCard(item: FolderWithCount, active: Boolean, onOpen: () -> Unit) {
+private fun FolderCard(
+    item: FolderWithCount, depth: Int, total: Int, childCount: Int, lastUpdated: Long?,
+    thumb1: String?, thumb2: String?, expanded: Boolean, active: Boolean, activeInside: Boolean,
+    onOpen: () -> Unit, onToggle: () -> Unit
+) {
     Row(
-        Modifier.fillMaxWidth().clip(RoundedCornerShape(22.dp)).background(Surface1).clickable(onClick = onOpen).padding(12.dp),
+        Modifier.fillMaxWidth().padding(start = (depth * 18).dp)
+            .clip(RoundedCornerShape(22.dp)).background(if (depth == 0) Surface1 else Surface2)
+            .clickable(onClick = onOpen).padding(12.dp),
         verticalAlignment = Alignment.CenterVertically
     ) {
-        ThumbStack(item.latestScreenshotPath, item.secondScreenshotPath)
+        ThumbStack(thumb1, thumb2)
         Spacer(Modifier.width(14.dp))
         Column(Modifier.weight(1f)) {
             Row(verticalAlignment = Alignment.CenterVertically) {
@@ -352,9 +393,18 @@ private fun FolderCard(item: FolderWithCount, active: Boolean, onOpen: () -> Uni
                 Text(item.folder.name, style = MaterialTheme.typography.titleMedium, maxLines = 1, overflow = TextOverflow.Ellipsis)
             }
             Spacer(Modifier.height(4.dp))
-            Text("${item.screenshotCount} shots \u00B7 ${DateLabels.updated(item.lastUpdatedAt)}", color = TextMuted, style = MaterialTheme.typography.bodySmall)
+            Text(
+                if (childCount > 0) "$total shots \u00B7 $childCount subfolders"
+                else "$total shots \u00B7 ${DateLabels.updated(lastUpdated)}",
+                color = TextMuted, style = MaterialTheme.typography.bodySmall, maxLines = 1, overflow = TextOverflow.Ellipsis
+            )
         }
-        if (active) StatusPill("Active") else Icon(Icons.Default.ChevronRight, null, tint = TextMuted)
+        if (active) StatusPill("Active") else if (activeInside && !expanded) StatusPill("Active inside")
+        if (childCount > 0) {
+            Box(Modifier.size(40.dp).clip(CircleShape).clickable(onClick = onToggle), contentAlignment = Alignment.Center) {
+                Icon(if (expanded) Icons.Default.KeyboardArrowUp else Icons.Default.KeyboardArrowDown, "Show subfolders", tint = TextSecondary)
+            }
+        } else if (!active && !activeInside) Icon(Icons.Default.ChevronRight, null, tint = TextMuted)
     }
 }
 

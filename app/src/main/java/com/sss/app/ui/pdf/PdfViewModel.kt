@@ -69,7 +69,7 @@ class PdfViewModel @Inject constructor(
         viewModelScope.launch {
             val s = settingsRepository.settings.first()
             options = options.copy(
-                perPage = s.pdfPerPage.coerceIn(1, 2),
+                perPage = s.pdfPerPage.coerceIn(1, 3),
                 quality = PdfQuality.entries.getOrElse(s.pdfQuality) { PdfQuality.MEDIUM }
             )
         }
@@ -98,6 +98,9 @@ class PdfViewModel @Inject constructor(
         PdfQuality.HIGH -> 0.7f; PdfQuality.MEDIUM -> 0.25f; PdfQuality.LOW -> 0.09f
     }
 
+    /** Real number of PDF pages: 7 images at 3 per page = 3 pages. */
+    fun sheetCount(): Int = if (pages.isEmpty()) 0 else (pages.size + options.perPage - 1) / options.perPage
+
     fun finalName(): String = PdfSaver.uniqueName(context, PdfSaver.sanitize(name))
 
     fun create() {
@@ -113,7 +116,12 @@ class PdfViewModel @Inject constructor(
                 val metas = metaRepository.metaMap.first()
                 val sources = snapshotPages.map { sh ->
                     val m = metas[MediaIds.fromPath(sh.filePath)]
-                    PdfPageSource(sh.filePath, m, MetaMath.effectiveRotation(m, snapshotOptions.useCrop, s.autoRotateWide))
+                    val manual = m?.rotation?.takeIf { it >= 0 } ?: 0
+                    // 2 or 3 per page: skip the automatic "turn wide slides sideways" rotation, it would make the
+                    // pictures tiny. To undo this, always use the MetaMath.effectiveRotation(...) branch.
+                    val rotation = if (snapshotOptions.perPage >= 2) manual
+                    else MetaMath.effectiveRotation(m, snapshotOptions.useCrop, s.autoRotateWide)
+                    PdfPageSource(sh.filePath, m, rotation)
                 }
                 val saved = withContext(Dispatchers.IO) {
                     val ctx = currentCoroutineContext()

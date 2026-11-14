@@ -22,6 +22,12 @@ class ScreenshotRepository(
         return screenshotDao.getScreenshotsByFolderList(folderId)
     }
 
+    fun getScreenshotsByFolders(ids: List<Long>): Flow<List<ScreenshotEntity>> =
+        screenshotDao.getScreenshotsByFolders(ids)
+
+    suspend fun getScreenshotsByFoldersList(ids: List<Long>): List<ScreenshotEntity> =
+        screenshotDao.getScreenshotsByFoldersList(ids)
+
     suspend fun getAllScreenshotsList(): List<ScreenshotEntity> {
         return screenshotDao.getAllScreenshotsList()
     }

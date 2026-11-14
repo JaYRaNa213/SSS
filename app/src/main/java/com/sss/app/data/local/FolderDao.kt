@@ -35,6 +35,7 @@ interface FolderDao {
             f.name AS name,
             f.createdAt AS createdAt,
             f.colorIndex AS colorIndex,
+            f.parentId AS parentId,
             COUNT(s.id) AS screenshotCount,
             (SELECT filePath FROM screenshots WHERE folderId = f.id ORDER BY capturedAt DESC, id DESC LIMIT 1) AS latestScreenshotPath,
             (SELECT filePath FROM screenshots WHERE folderId = f.id ORDER BY capturedAt DESC, id DESC LIMIT 1 OFFSET 1) AS secondScreenshotPath,
@@ -56,6 +57,13 @@ interface FolderDao {
     @Query("UPDATE folders SET name = :name WHERE id = :id")
     suspend fun renameFolder(id: Long, name: String)
 
+    @Query("UPDATE folders SET parentId = :parentId WHERE id = :id")
+    suspend fun setParent(id: Long, parentId: Long?)
+
     @Delete
     suspend fun deleteFolder(folder: FolderEntity)
+
+    /** Screenshots of these folders are removed by the existing ON DELETE CASCADE foreign key. */
+    @Query("DELETE FROM folders WHERE id IN (:ids)")
+    suspend fun deleteByIds(ids: List<Long>)
 }

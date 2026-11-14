@@ -56,7 +56,7 @@ object PdfBuilder {
         val doc = PdfDocument()
         try {
             var done = 0
-            val groups = pages.chunked(o.perPage.coerceIn(1, 2))
+            val groups = pages.chunked(o.perPage.coerceIn(1, 3))
             groups.forEachIndexed { gi, group ->
                 checkCancel()
                 val bitmaps = group.map { load(context, it, o) }
@@ -162,7 +162,7 @@ object PdfBuilder {
     }
 
     private fun pageSize(o: PdfOptions, bitmaps: List<Bitmap?>): Pair<Int, Int> {
-        if (o.a4 || o.perPage == 2) return 595 to 842
+        if (o.a4 || o.perPage >= 2) return 595 to 842
         val b = bitmaps.filterNotNull().firstOrNull() ?: return 595 to 842
         val s = 842f / max(b.width, b.height)
         return (b.width * s).roundToInt().coerceAtLeast(100) to (b.height * s).roundToInt().coerceAtLeast(100)
@@ -171,14 +171,33 @@ object PdfBuilder {
     private fun draw(canvas: Canvas, bitmaps: List<Bitmap?>, pw: Int, ph: Int, o: PdfOptions) {
         canvas.drawColor(Color.WHITE)
         val m = if (o.margin) 16f else 0f
+        val gap = 8f
         val paint = Paint(Paint.FILTER_BITMAP_FLAG)
-        if (o.perPage == 1) {
-            drawFit(canvas, bitmaps.firstOrNull(), RectF(m, m, pw - m, ph - m), paint)
-        } else {
-            val gap = 8f
-            val cellH = (ph - 2 * m - gap) / 2f
-            drawFit(canvas, bitmaps.getOrNull(0), RectF(m, m, pw - m, m + cellH), paint)
-            drawFit(canvas, bitmaps.getOrNull(1), RectF(m, m + cellH + gap, pw - m, m + 2 * cellH + gap), paint)
+        when (o.perPage.coerceIn(1, 3)) {
+            1 -> drawFit(canvas, bitmaps.firstOrNull(), RectF(m, m, pw - m, ph - m), paint)
+            2 -> {
+                val cellH = (ph - 2 * m - gap) / 2f
+                drawFit(canvas, bitmaps.getOrNull(0), RectF(m, m, pw - m, m + cellH), paint)
+                drawFit(canvas, bitmaps.getOrNull(1), RectF(m, m + cellH + gap, pw - m, m + 2 * cellH + gap), paint)
+            }
+            else -> {
+                // Landscape pictures (lecture frames) are stacked in 3 rows, portrait pictures sit in 3 columns.
+                val present = bitmaps.filterNotNull()
+                val stacked = present.isEmpty() || present.count { it.width >= it.height } * 2 >= present.size
+                if (stacked) {
+                    val cellH = (ph - 2 * m - 2 * gap) / 3f
+                    for (i in 0 until 3) {
+                        val top = m + i * (cellH + gap)
+                        drawFit(canvas, bitmaps.getOrNull(i), RectF(m, top, pw - m, top + cellH), paint)
+                    }
+                } else {
+                    val cellW = (pw - 2 * m - 2 * gap) / 3f
+                    for (i in 0 until 3) {
+                        val left = m + i * (cellW + gap)
+                        drawFit(canvas, bitmaps.getOrNull(i), RectF(left, m, left + cellW, ph - m), paint)
+                    }
+                }
+            }
         }
     }
 

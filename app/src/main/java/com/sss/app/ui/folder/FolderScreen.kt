@@ -3,6 +3,7 @@ package com.sss.app.ui.folder
 import android.app.Activity
 import android.content.Intent
 import android.net.Uri
+import android.widget.Toast
 import androidx.activity.compose.BackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.IntentSenderRequest
@@ -13,6 +14,7 @@ import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.gestures.detectVerticalDragGestures
+import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
@@ -36,17 +38,22 @@ import androidx.compose.foundation.lazy.grid.LazyGridState
 import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
 import androidx.compose.foundation.lazy.grid.items
 import androidx.compose.foundation.lazy.grid.rememberLazyGridState
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.Check
+import androidx.compose.material.icons.filled.ChevronRight
 import androidx.compose.material.icons.filled.Close
+import androidx.compose.material.icons.filled.CreateNewFolder
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.DoneAll
 import androidx.compose.material.icons.filled.DriveFileMove
+import androidx.compose.material.icons.filled.Folder
 import androidx.compose.material.icons.filled.MoreVert
 import androidx.compose.material.icons.filled.PictureAsPdf
+import androidx.compose.material.icons.filled.RotateRight
 import androidx.compose.material.icons.filled.Share
 import androidx.compose.material.icons.filled.SwapVert
 import androidx.compose.material.icons.outlined.CheckCircle
@@ -72,6 +79,7 @@ import androidx.compose.runtime.mutableStateListOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -81,12 +89,17 @@ import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.hilt.navigation.compose.hiltViewModel
+import com.sss.app.data.local.FolderEntity
 import com.sss.app.data.local.ScreenshotEntity
+import com.sss.app.data.repository.FolderResult
 import com.sss.app.data.settings.SortOrder
-import com.sss.app.ui.common.CroppedImage
+import com.sss.app.domain.folder.FolderTree
+import com.sss.app.ui.common.RotatedImage
+import com.sss.app.ui.common.manualRotation
 import com.sss.app.ui.home.FolderNameDialog
 import com.sss.app.ui.ocr.OcrStatus
 import com.sss.app.ui.ocr.OcrViewModel
@@ -104,7 +117,9 @@ import kotlin.math.roundToInt
 fun FolderScreen(
     folderId: Long,
     onBack: () -> Unit,
-    onOpenViewer: (Int) -> Unit,
+    onOpenFolder: (Long) -> Unit,                 // open a subfolder
+    onOpenAncestor: (Long) -> Unit,               // breadcrumb tap
+    onOpenViewer: (index: Int, includeSub: Boolean) -> Unit,
     onOpenDocument: (Long) -> Unit,
     onCreatePdf: () -> Unit,
     allVm: AllScreenshotsViewModel,
@@ -117,13 +132,21 @@ fun FolderScreen(
 
     val settings by viewModel.settings.collectAsState()
     val folder by remember(folderId) { viewModel.folder(folderId) }.collectAsState(initial = null)
-    val roomShots by remember(folderId) { viewModel.screenshots(folderId) }.collectAsState()
+    val allFolders by viewModel.folders.collectAsState()
+    val counts by viewModel.foldersWithCount.collectAsState()
     val otherShots by allVm.allScreenshots.collectAsState()
     val metaMap by viewModel.metaMap.collectAsState()
-    val allFolders by viewModel.folders.collectAsState()
     val docs by remember(folderId) { viewModel.getDocumentsByFolder(folderId) }.collectAsState(initial = emptyList())
     val ocrState by ocrViewModel.ocrUiState.collectAsState()
     val analysis by viewModel.analysisProgress.collectAsState()
+
+    // ---- tree info
+    val descendants = remember(allFolders, folderId) { if (isOther) emptyList() else FolderTree.descendantIds(allFolders, folderId) }
+    val children = remember(allFolders, folderId) { if (isOther) emptyList() else FolderTree.children(allFolders, folderId) }
+    val path = remember(allFolders, folderId) { if (isOther) emptyList() else FolderTree.path(allFolders, folderId) }
+    var includeSub by rememberSaveable(folderId) { mutableStateOf(false) }
+    val ids = remember(folderId, includeSub, descendants) { if (includeSub) listOf(folderId) + descendants else listOf(folderId) }
+    val roomShots by remember(ids) { viewModel.screenshotsIn(ids) }.collectAsState()
 
     val raw = if (isOther) otherShots else roomShots
     val order = if (isOther) settings.sortOther else settings.sortFolders
@@ -139,6 +162,9 @@ fun FolderScreen(
     var showRename by remember { mutableStateOf(false) }
     var showDeleteFolder by remember { mutableStateOf(false) }
     var showMove by remember { mutableStateOf(false) }
+    var showRotate by remember { mutableStateOf(false) }
+    var showNewSub by remember { mutableStateOf(false) }
+    var showMoveFolder by remember { mutableStateOf(false) }
     var pendingOtherDelete by remember { mutableStateOf<List<ScreenshotEntity>?>(null) }
 
     val snackbar = remember { SnackbarHostState() }
@@ -168,8 +194,8 @@ fun FolderScreen(
     }
 
     fun selectedShots(): List<ScreenshotEntity> = selected.mapNotNull { id -> sorted.firstOrNull { it.id == id } }
-    fun toggleDay(ids: List<Long>) {
-        if (ids.all { it in selected }) selected.removeAll(ids.toSet()) else ids.forEach { if (it !in selected) selected.add(it) }
+    fun toggleDay(ids2: List<Long>) {
+        if (ids2.all { it in selected }) selected.removeAll(ids2.toSet()) else ids2.forEach { if (it !in selected) selected.add(it) }
     }
     fun share(targets: List<ScreenshotEntity>) {
         if (targets.isEmpty()) return
@@ -192,6 +218,9 @@ fun FolderScreen(
         val targets = selectedShots()
         if (targets.isEmpty()) return
         if (isOther) pendingOtherDelete = targets else { viewModel.delete(targets); exitSelect() }
+    }
+    fun toastIfInvalid(r: FolderResult) {
+        if (r is FolderResult.Invalid) Toast.makeText(context, r.message, Toast.LENGTH_LONG).show()
     }
 
     Scaffold(containerColor = Bg, snackbarHost = { SnackbarHost(snackbar) }) { inner ->
@@ -221,15 +250,28 @@ fun FolderScreen(
                 Row(Modifier.fillMaxWidth().padding(horizontal = 8.dp, vertical = 8.dp), verticalAlignment = Alignment.CenterVertically) {
                     IconButton(onClick = onBack) { Icon(Icons.AutoMirrored.Filled.ArrowBack, "Back") }
                     Column(Modifier.weight(1f)) {
+                        if (path.size > 1) Row(Modifier.horizontalScroll(rememberScrollState()), verticalAlignment = Alignment.CenterVertically) {
+                            path.dropLast(1).forEach { f ->
+                                Text(f.name, color = Accent, fontSize = 12.sp, fontWeight = FontWeight.SemiBold, maxLines = 1,
+                                    modifier = Modifier.clickable { onOpenAncestor(f.id) })
+                                Text("  \u203A  ", color = TextMuted, fontSize = 12.sp)
+                            }
+                        }
                         Text(title, style = MaterialTheme.typography.titleLarge, maxLines = 1)
-                        MonoLabel("${sorted.size} screenshots")
+                        MonoLabel("${sorted.size} screenshots" + if (includeSub) " \u00B7 incl. subfolders" else "")
                     }
                     IconButton(onClick = { showMenu = true }) { Icon(Icons.Default.MoreVert, "More") }
                 }
                 LazyRow(contentPadding = PaddingValues(horizontal = 20.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    item { FilterPill("All", true, {}) }
+                    item { FilterPill(if (descendants.isEmpty()) "All" else "This folder", !includeSub, { includeSub = false }) }
+                    if (descendants.isNotEmpty()) item {
+                        FilterPill("With subfolders", includeSub, { includeSub = true }, icon = Icons.Default.Folder)
+                    }
                     item {
                         FilterPill(if (order == SortOrder.OLDEST) "Oldest" else "Newest", false, { showSort = true }, icon = Icons.Default.SwapVert)
+                    }
+                    if (!isOther) item {
+                        FilterPill("New subfolder", false, { showNewSub = true }, icon = Icons.Default.CreateNewFolder)
                     }
                     if (docs.isNotEmpty()) item {
                         FilterPill("Notes \u00B7 ${docs.size}", false, { scope.launch { gridState.animateScrollToItem(0) } })
@@ -242,13 +284,13 @@ fun FolderScreen(
 
             // ---------------- grid
             Box(Modifier.weight(1f).fillMaxWidth()) {
-                if (sorted.isEmpty() && docs.isEmpty()) {
+                if (sorted.isEmpty() && docs.isEmpty() && children.isEmpty()) {
                     Column(Modifier.fillMaxSize().padding(32.dp), horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.Center) {
                         Text("No screenshots yet", style = MaterialTheme.typography.titleMedium)
                         Spacer(Modifier.height(6.dp))
                         Text(
                             if (isOther) "Screenshots taken while no folder is active appear here."
-                            else "Start capture on the home screen and take screenshots.",
+                            else "Start capture on the home screen and pick this folder.",
                             color = TextMuted, style = MaterialTheme.typography.bodyMedium
                         )
                     }
@@ -261,6 +303,18 @@ fun FolderScreen(
                         verticalArrangement = Arrangement.spacedBy(6.dp),
                         modifier = Modifier.fillMaxSize()
                     ) {
+                        // ---- subfolders
+                        if (children.isNotEmpty()) {
+                            item(span = { GridItemSpan(maxLineSpan) }, key = "sub-label") {
+                                Text("Subfolders \u00B7 ${children.size}", style = MaterialTheme.typography.titleSmall, modifier = Modifier.padding(top = 10.dp, bottom = 2.dp))
+                            }
+                            items(children, key = { "sub-${it.id}" }, span = { GridItemSpan(maxLineSpan) }) { c ->
+                                SubfolderRow(
+                                    c, FolderTree.totalCount(counts, c.id), allFolders.count { it.parentId == c.id }
+                                ) { onOpenFolder(c.id) }
+                            }
+                        }
+                        // ---- notes
                         if (docs.isNotEmpty()) {
                             item(span = { GridItemSpan(maxLineSpan) }, key = "notes-label") {
                                 Text("Notes", style = MaterialTheme.typography.titleSmall, modifier = Modifier.padding(top = 10.dp, bottom = 2.dp))
@@ -279,6 +333,7 @@ fun FolderScreen(
                                 }
                             }
                         }
+                        // ---- screenshots
                         items(
                             entries,
                             key = { e -> when (e) { is GridEntry.Header -> "h-${e.key}"; is GridEntry.Shot -> e.shot.id } },
@@ -297,21 +352,23 @@ fun FolderScreen(
                                 is GridEntry.Shot -> {
                                     val shot = e.shot
                                     val isSel = shot.id in selected
+                                    val meta = metaMap[MediaIds.fromPath(shot.filePath)]
                                     Box(
-                                        Modifier.aspectRatio(16f / 10f)          // change to 3f / 4f for tall cells like the mockup
+                                        Modifier.aspectRatio(16f / 10f)          // change to 3f / 4f for tall cells
                                             .clip(RoundedCornerShape(12.dp)).background(Surface2)
                                             .then(if (isSel) Modifier.border(2.5.dp, Accent, RoundedCornerShape(12.dp)) else Modifier)
                                             .combinedClickable(
                                                 onClick = {
                                                     if (selectMode) { if (isSel) selected.remove(shot.id) else selected.add(shot.id) }
-                                                    else onOpenViewer(e.index)
+                                                    else onOpenViewer(e.index, includeSub)
                                                 },
                                                 onLongClick = { selectMode = true; if (!isSel) selected.add(shot.id) }
                                             )
                                     ) {
-                                        CroppedImage(
-                                            model = shot.filePath.toImageModel(), meta = metaMap[MediaIds.fromPath(shot.filePath)],
-                                            cropEnabled = settings.autoCrop, modifier = Modifier.fillMaxSize()
+                                        RotatedImage(
+                                            model = shot.filePath.toImageModel(), meta = meta,
+                                            cropEnabled = settings.autoCrop, rotation = manualRotation(meta),
+                                            modifier = Modifier.fillMaxSize()
                                         )
                                         if (selectMode) {
                                             Box(Modifier.align(Alignment.TopEnd).padding(6.dp).size(24.dp).clip(CircleShape)
@@ -355,6 +412,7 @@ fun FolderScreen(
                         Spacer(Modifier.height(8.dp))
                         Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceEvenly) {
                             BarAction(Icons.Default.DriveFileMove, "Move") { if (selected.isNotEmpty()) showMove = true }
+                            BarAction(Icons.Default.RotateRight, "Rotate") { if (selected.isNotEmpty()) showRotate = true }
                             BarAction(Icons.Default.PictureAsPdf, "PDF") { openPdf(selectedShots()) }
                             BarAction(Icons.Default.Share, "Share") { share(selectedShots()) }
                             BarAction(Icons.Default.Delete, "Delete", danger = true) { deleteSelected() }
@@ -367,17 +425,54 @@ fun FolderScreen(
 
     // ---------------- sheets + dialogs
     if (showSort) SortSheet(order, { viewModel.setSort(isOther, it) }, { showSort = false })
+
     if (showMenu) FolderMenuSheet(
-        title = title, colorIndex = colorIndex, subtitle = "${sorted.size} screenshots", sortLabel = if (order == SortOrder.OLDEST) "Oldest first" else "Newest first",
-        isOther = isOther,
-        onRename = { showRename = true }, onSort = { showSort = true },
+        title = title, colorIndex = colorIndex, subtitle = "${sorted.size} screenshots",
+        sortLabel = if (order == SortOrder.OLDEST) "Oldest first" else "Newest first", isOther = isOther,
+        onRename = { showRename = true }, onNewSubfolder = { showNewSub = true }, onMoveFolder = { showMoveFolder = true },
+        onSort = { showSort = true },
         onSelectAll = { selectMode = true; selected.clear(); selected.addAll(sorted.map { it.id }) },
         onMoveAll = { selectMode = true; selected.clear(); selected.addAll(sorted.map { it.id }); showMove = true },
         onPdf = { openPdf(sorted) }, onDelete = { showDeleteFolder = true }, onDismiss = { showMenu = false }
     )
+
+    if (showRotate) RotateSheet(
+        count = selected.size,
+        onPick = { choice ->
+            val n = selected.size
+            viewModel.rotateMany(selectedShots(), choice)
+            Toast.makeText(context, "Updated $n screenshot${if (n == 1) "" else "s"}", Toast.LENGTH_SHORT).show()
+        },
+        onDismiss = { showRotate = false }
+    )
+
+    if (showNewSub) NewFolderSheet(
+        existing = allFolders, initialParentId = folderId, showStartToggle = false,
+        onCreate = { name, color, _, parent ->
+            showNewSub = false
+            viewModel.createFolder(name, color, parent) { r -> toastIfInvalid(r) }
+        },
+        onDismiss = { showNewSub = false }
+    )
+
+    if (showMoveFolder) {
+        val exclude = remember(allFolders, folderId) { FolderTree.subtreeIds(allFolders, folderId).toSet() }
+        FolderPickerSheet(
+            title = "Move folder to",
+            items = FolderTree.flattenEntities(allFolders, exclude = exclude)
+                .filter { it.depth <= FolderTree.MAX_DEPTH - 2 }
+                .map { PickItem(it.item.id, it.item.name, it.item.colorIndex, null, it.depth) },
+            activeId = folder?.parentId, onNew = null,
+            onRoot = { showMoveFolder = false; viewModel.moveFolder(folderId, null) { r -> toastIfInvalid(r) } },
+            onPick = { target -> showMoveFolder = false; viewModel.moveFolder(folderId, target) { r -> toastIfInvalid(r) } },
+            onDismiss = { showMoveFolder = false }
+        )
+    }
+
     if (showMove) FolderPickerSheet(
-        title = "Move to folder",
-        items = allFolders.filter { it.id != folderId }.map { PickItem(it.id, it.name, it.colorIndex, null) },
+        title = "Move screenshots to",
+        items = FolderTree.flattenEntities(allFolders).filter { it.item.id != folderId }
+            .map { PickItem(it.item.id, it.item.name, it.item.colorIndex, null, it.depth) },
         activeId = null, onNew = null, onDismiss = { showMove = false },
         onPick = { target ->
             showMove = false
@@ -386,17 +481,27 @@ fun FolderScreen(
             viewModel.moveTo(list, target, isOther) { if (isOther) allVm.loadAllScreenshots() }
         }
     )
+
     if (showRename) FolderNameDialog(
-        title = "Rename folder", confirmLabel = "Save", initial = folder?.name.orEmpty(), existing = allFolders, ignoreId = folderId,
-        onConfirm = { name -> showRename = false; viewModel.rename(folderId, name) { } }, onDismiss = { showRename = false }
+        title = "Rename folder", confirmLabel = "Save", initial = folder?.name.orEmpty(), existing = allFolders,
+        ignoreId = folderId, parentId = folder?.parentId,
+        onConfirm = { name -> showRename = false; viewModel.rename(folderId, name) { r -> toastIfInvalid(r) } },
+        onDismiss = { showRename = false }
     )
+
     if (showDeleteFolder) AlertDialog(
         onDismissRequest = { showDeleteFolder = false },
         title = { Text("Delete folder?") },
-        text = { Text("The folder is removed from 4S. Its screenshots stay in your phone gallery.") },
+        text = {
+            Text(
+                if (descendants.isEmpty()) "The folder is removed from 4S. Its screenshots stay in your phone gallery."
+                else "This also deletes its ${descendants.size} subfolder${if (descendants.size == 1) "" else "s"} from 4S. The screenshots stay in your phone gallery."
+            )
+        },
         confirmButton = { TextButton(onClick = { showDeleteFolder = false; viewModel.deleteFolder(folderId) { onBack() } }) { Text("Delete", color = Danger) } },
         dismissButton = { TextButton(onClick = { showDeleteFolder = false }) { Text("Cancel") } }
     )
+
     pendingOtherDelete?.let { list ->
         AlertDialog(
             onDismissRequest = { pendingOtherDelete = null },
@@ -413,6 +518,7 @@ fun FolderScreen(
             dismissButton = { TextButton(onClick = { pendingOtherDelete = null }) { Text("Cancel") } }
         )
     }
+
     if (ocrState.status == OcrStatus.PROCESSING) AlertDialog(
         onDismissRequest = {},
         title = { Text("Extracting text...") },
@@ -428,10 +534,30 @@ fun FolderScreen(
 }
 
 @Composable
+private fun SubfolderRow(f: FolderEntity, total: Int, subCount: Int, onClick: () -> Unit) {
+    Row(
+        Modifier.fillMaxWidth().clip(RoundedCornerShape(20.dp)).background(Surface1).clickable(onClick = onClick)
+            .padding(horizontal = 16.dp, vertical = 14.dp),
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        ColorDot(folderColor(f.colorIndex), 10.dp)
+        Spacer(Modifier.width(12.dp))
+        Column(Modifier.weight(1f)) {
+            Text(f.name, fontWeight = FontWeight.SemiBold, fontSize = 16.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
+            Text(
+                buildString { append("$total shots"); if (subCount > 0) append(" \u00B7 $subCount subfolders") },
+                color = TextMuted, fontSize = 13.sp
+            )
+        }
+        Icon(Icons.Default.ChevronRight, null, tint = TextMuted)
+    }
+}
+
+@Composable
 private fun BarAction(icon: ImageVector, label: String, danger: Boolean = false, onClick: () -> Unit) {
     val c = if (danger) Danger else TextPrimary
     Column(
-        Modifier.clip(RoundedCornerShape(16.dp)).clickable(onClick = onClick).padding(horizontal = 18.dp, vertical = 6.dp),
+        Modifier.clip(RoundedCornerShape(16.dp)).clickable(onClick = onClick).padding(horizontal = 10.dp, vertical = 6.dp),
         horizontalAlignment = Alignment.CenterHorizontally
     ) {
         Icon(icon, label, tint = c, modifier = Modifier.size(22.dp))

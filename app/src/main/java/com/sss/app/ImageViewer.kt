@@ -103,6 +103,7 @@ import coil3.compose.AsyncImage
 import com.sss.app.data.local.ScreenshotEntity
 import com.sss.app.data.local.ScreenshotMetaEntity
 import com.sss.app.data.settings.AppSettings
+import com.sss.app.domain.folder.FolderTree
 import com.sss.app.ui.common.CroppedImage
 import com.sss.app.ui.common.MetaMath
 import com.sss.app.ui.folder.AllScreenshotsViewModel
@@ -239,6 +240,7 @@ fun ZoomableContent(
 fun ImageViewerScreen(
     folderId: Long,
     initialIndex: Int,
+    includeSub: Boolean = false,
     onBack: () -> Unit,
     onOpenDocument: (Long) -> Unit,
     allScreenshotsViewModel: AllScreenshotsViewModel,
@@ -252,7 +254,11 @@ fun ImageViewerScreen(
     val settings by viewModel.settings.collectAsState()
     val metaMap by viewModel.metaMap.collectAsState()
     val folder by remember(folderId) { viewModel.folder(folderId) }.collectAsState(initial = null)
-    val roomShots by remember(folderId) { viewModel.screenshots(folderId) }.collectAsState()
+    val allFolders by viewModel.folders.collectAsState()
+    val ids = remember(allFolders, folderId, includeSub, isOther) {
+        if (includeSub && !isOther) FolderTree.subtreeIds(allFolders, folderId) else listOf(folderId)
+    }
+    val roomShots by remember(ids) { viewModel.screenshotsIn(ids) }.collectAsState()
     val otherShots by allScreenshotsViewModel.allScreenshots.collectAsState()
     val ocrState by ocrViewModel.ocrUiState.collectAsState()
     val undo by viewModel.undo.collectAsState()
@@ -295,6 +301,11 @@ fun ImageViewerScreen(
     var pendingOtherDelete by remember { mutableStateOf<ScreenshotEntity?>(null) }
     val deleteLauncher = rememberLauncherForActivityResult(ActivityResultContracts.StartIntentSenderForResult()) { r ->
         if (r.resultCode == Activity.RESULT_OK) allScreenshotsViewModel.loadAllScreenshots()
+    }
+
+    if (includeSub && !isOther && allFolders.isEmpty()) {
+        Box(Modifier.fillMaxSize().background(Color.Black))
+        return
     }
 
     if (sorted.isEmpty()) {
